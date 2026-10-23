@@ -1,0 +1,47 @@
+[project]
+name = "agent-harness"
+dynamic = ["version"]
+description = "本地运行、支持插件扩展的 AI Agent Harness"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.23",
+    "openai>=1.50",
+    "packaging>=24.0",
+    "pydantic>=2.8",
+    "rich>=13.7",
+    "typer>=0.12",
+]
+
+[project.scripts]
+harness = "agent_harness.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/agent_harness/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_harness", "src/harness_sdk"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "-ra"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# 代码行宽由 ruff format 负责；中文文档字符串和错误消息不强制折行。
+ignore = ["E501"]

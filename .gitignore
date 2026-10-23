@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 工具
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 本地运行产生的 Harness 数据目录（如果在项目内设置了 HARNESS_HOME）
+.harness-home/
+
+# 系统
+.DS_Store
