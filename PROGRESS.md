@@ -6,7 +6,44 @@
 |---|---|
 | Step 0 项目骨架 | 已完成 |
 | **M1 端到端最小闭环** | **已完成**（默认模型受账户 guardrail 限制，见遗留问题 1） |
+| M1 设计一致性核对与修正 | 已完成（DESIGN.md 升至 v0.3） |
 | M2 插件管理 | 下一步 |
+
+---
+
+## M1 设计一致性核对与修正（2026-10-23）
+
+### 目标
+
+M1 完成后对照 DESIGN.md 逐节核对实现。实现偏离设计的地方，修改代码向设计看齐；更合理的实现做法，则写回 DESIGN.md（v0.3），保证文档与代码一致。
+
+### 发现的偏差与处理
+
+| 位置 | 偏差 | 处理 |
+|---|---|---|
+| §3.2 | CLI 直接调用了 `plugins.manifest.qualified_tool_name` | 改用 `PluginInfo.tool_names`；DESIGN.md 写明“CLI 只通过 `Harness` 调用功能，其他模块只能引用数据类型”，并新增架构测试（已验证它能拦住违规导入） |
+| §12 | `llm.response` 缺耗时；`tool.finished` 缺结果摘要和 stderr 末尾 | 补齐 `duration_ms`、`result_preview` / `result_chars`、`stderr_tail` |
+| §12、§6.3 | 没有全局 `-v`；`tool call -v` 不显示请求 | 全局 `-v` 只打开宿主自己的 DEBUG 日志，不记录参数、配置和环境变量；`tool call -v` 显示请求、响应和 stderr |
+| §8.4、§14 | `search_notes` 不支持 `offset`，也不返回 `next_offset`（核对时漏掉，手动验证时发现） | 补齐分页；新增经由宿主的分页端到端测试（已验证清单缺少 `offset` 时这条测试会失败） |
+| §7.2 | 开发模式重复安装同一来源时视为成功，与文档不一致 | 保留实现，写入 DESIGN.md |
+| §10.2 | 额外传了 `LC_ALL`、`PYTHONUTF8`、`PYTHONDONTWRITEBYTECODE` | 保留实现，写入 DESIGN.md 并说明理由 |
+| §15 | `tests/plugins/` 目录和 `python-dotenv` 依赖没有记录 | 写入 DESIGN.md |
+
+### 验证结果
+
+| 验收项 | 结果 |
+|---|---|
+| `pytest` | 159 passed |
+| `ruff check .` / `ruff format --check .` | 全部通过 |
+| 手动运行 `harness -v tool call notes__search_notes --args ... -v` | DEBUG 日志、请求、响应、stderr 都按 §6.3 和 §12 显示，调试日志里没有工具参数 |
+
+### 经验
+
+`plugin.invoke` 不经过宿主的 Schema 校验，所以只用它测试插件，发现不了“清单与实现不一致”。这一点已写进 DESIGN.md §6.2 和 §16，后续的插件（包括 `workspace` 和 `plugin new` 模板）都要有经由宿主的测试。
+
+### 仍然按计划推迟的部分（不是偏差）
+
+大结果处理和输出大小上限（M3）：目前完整结果会交给模型，stdout 的读取量也没有上限。启用、授权和 `permissions.env` 的批准（M2）：目前所有已安装的插件都可以调用。`run` 失败时显示 stderr（M3）。
 
 ---
 

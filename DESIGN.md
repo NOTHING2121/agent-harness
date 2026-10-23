@@ -1,11 +1,21 @@
 # Local Agent Harness 设计文档
 
-> 状态：草案 v0.2，待确认。确认后作为后续开发的依据，变更需同步更新本文档。
+> 状态：v0.3（M1 实现后同步）。作为后续开发的依据，变更需同步更新本文档。
 > 日期：2026-10-23
 
 本文档定义 Harness 的模块架构、插件协议、生命周期、数据流与安全边界。原则是：**先保证插件能动态接入、Agent 能实际调用、整条链路能跑通**，工程能力够用即可，不提前做满。
 
 ### 修订记录
+
+**v0.3**（M1 完成后对照实现逐节核对，记录调整与澄清）
+
+- §3.2：明确 CLI 的依赖规则——功能只通过 `Harness` 调用，从其他核心模块只能引用数据类型，并由架构测试检查。
+- §6.2、§16：说明 `plugin.invoke` 不做 `input_schema` 校验，清单与实现是否一致需要经由宿主的测试来保证。
+- §7.2：开发模式下重复安装同一来源视为成功（幂等）。
+- §10.2：补全传给插件进程的环境变量（`LC_ALL`、`PYTHONUTF8`、`PYTHONDONTWRITEBYTECODE`）。
+- §11.3、§15、§18：LLM 默认走 OpenRouter，CLI 读取当前目录的 `.env`，新增依赖 `python-dotenv`。
+- §12：补全事件字段，明确 `-v` 只打开宿主自己的调试日志。
+- §15：插件测试放在 `tests/plugins/`。
 
 **v0.2**（根据评审意见修改）
 
@@ -103,6 +113,7 @@
 ### 3.2 依赖规则
 
 - 单向依赖：`cli → app → {agent, plugins, store, trace}`；`agent` 只通过构造函数注入的 `Registry` 和 `ToolExecutor` 使用插件；`errors` 是叶子模块。
+- **CLI 的功能调用只通过 `Harness`**。CLI 可以从其他核心模块引用数据类型（Pydantic 模型、dataclass、枚举、异常、类型别名），用来做类型注解和渲染（如 `ToolResult`、`Event`、`ErrorInfo`），但不能直接调用其中的函数或业务类。由架构测试检查。
 - **宿主核心不 import 任何具体插件，也不出现示例插件的名字**。有测试检查 `src/agent_harness` 中不含示例插件标识。
 - `harness_sdk` 不 import `agent_harness`；宿主只引用 `harness_sdk.protocol`（协议常量与消息结构是双方唯一共享的契约）。
 
@@ -341,7 +352,7 @@ if __name__ == "__main__":
 - 返回普通值即作为 `content`，返回 `ToolOutput` 可以附带 `display`；结果不能序列化为 JSON 时返回 `exception` 错误。
 - 捕获异常：`ToolError` 转为 `tool_error`；其他异常转为 `exception`，堆栈写入 stderr。
 - `Context` 提供 `plugin_id`、`call_id`、`config`（已校验并补齐默认值）、`data_dir`，以及写到 stderr 的 `log`。
-- `plugin.invoke(tool, arguments, config=..., data_dir=...)`：在进程内直接调用处理函数，插件作者写单元测试时不需要启动宿主。
+- `plugin.invoke(tool, arguments, config=..., data_dir=...)`：在进程内直接调用处理函数，插件作者写单元测试时不需要启动宿主。注意：`invoke` **不按 `input_schema` 校验参数**（校验由宿主完成），所以清单与处理函数是否一致（例如参数名、可选参数），需要用 `harness tool call` 或经由宿主的测试来确认。
 
 ### 6.3 写出并调试第一个插件
 
@@ -394,7 +405,7 @@ harness run "跟 Ada 打个招呼"          # 经由 Agent 调用
 
 **卸载**：① 删除 `state.json` 中的记录（插件回到"已安装、未启用"的安全状态）→ ② 删除 `plugins/<id>` 链接（插件即不存在）→ ③ 删除副本目录（开发模式不会删除用户的源码）→ ④ 如果指定了 `--purge`，删除数据目录。
 
-**开发模式**（`--dev`）：`plugins/<id>` 直接链接到源码目录，不复制，也不需要更新。
+**开发模式**（`--dev`）：`plugins/<id>` 直接链接到源码目录，不复制，也不需要更新。链接通过"创建临时链接 + `os.replace`"原子地生成。重复安装同一个源码目录视为成功（幂等），方便反复执行安装脚本；同一 ID 已链接到其他目录时拒绝。
 
 **自动清理**：每次执行管理操作时（在锁内），删除 `packages/` 中没有被任何链接引用的目录，以及残留的 `.tmp-*` 目录；同时删除 `state.json` 中已不存在对应插件的记录。
 
@@ -538,7 +549,7 @@ class LLMClient(Protocol):
 
 1. **未启用的插件不执行。** 发现、安装、查看、校验都只读取清单和复制文件；只有 active 插件会被启动。
 2. **启用时确认授权。** `enable` 会展示插件声明的能力，并附上"这些是插件的自我声明，宿主无法限制"的提示；用户确认后记录已批准的声明。`disable` 即撤销授权。更新后声明发生变化时，插件进入 `needs_approval`，需要重新确认后才会运行。
-3. **环境变量隔离。** 插件进程只拿到最小环境（`PATH`、`HOME`、`LANG`、`TMPDIR`）加上它声明且被批准的变量；宿主自己的 `OPENROUTER_API_KEY` 等变量不会传给插件。插件需要的密钥一律通过环境变量提供，**宿主不存储任何密钥**。
+3. **环境变量隔离。** 插件进程只拿到最小环境（`PATH`、`HOME`、`LANG`、`LC_ALL`、`TMPDIR`）加上它声明且被批准的变量；宿主自己的 `OPENROUTER_API_KEY` 等变量不会传给插件。宿主另外设置 `PYTHONUTF8=1`（插件的输入输出统一使用 UTF-8）和 `PYTHONDONTWRITEBYTECODE=1`（不在插件目录中生成 `__pycache__`，因为开发模式下这是用户的源码目录，复制安装的副本也不应被修改）。插件需要的密钥一律通过环境变量提供，**宿主不存储任何密钥**。
 4. **危险操作逐次确认。** 标记了 `requires_confirmation` 的工具每次调用前都要用户确认。
 5. **安装时的安全检查。** 入口不得逃逸出插件目录；复制时拒绝符号链接；限制总大小。
 6. **资源兜底。** 调用超时后终止进程组；限制输出大小。**不限制** CPU 和内存。
@@ -628,11 +639,14 @@ max_timeout_s = 120
   | 事件 | 主要字段 |
   |---|---|
   | `run.started` | prompt、模型、可用工具列表 |
-  | `llm.response` | 步数、回复摘要、工具调用、token 用量、耗时 |
-  | `tool.started` / `tool.finished` | call_id、工具名、参数、成功与否、错误码、耗时、结果摘要、是否截断、stderr 末尾 |
-  | `run.finished` | 状态（completed / failed / max_steps_exceeded / cancelled）、最终回答 |
+  | `llm.response` | 步数（`step`）、回复内容（`content`）、工具调用（`tool_calls`）、token 用量（`usage`）、耗时（`duration_ms`） |
+  | `tool.started` | `call_id`、工具名、参数 |
+  | `tool.finished` | `call_id`、工具名、成功与否、`display`、结果摘要（`result_preview`，前 500 字符）和结果总长度（`result_chars`）、错误（含错误码）、`stderr_tail`、耗时；M3 加入"是否截断" |
+  | `run.finished` | 状态（completed / failed / max_steps_exceeded / cancelled）、步数、最终回答、错误和修复建议（`hint`） |
 
-- **日志**：Python `logging` 输出到 stderr，默认级别为 WARNING，`-v` 时输出 DEBUG。不单独写日志文件，排障主要依靠追踪。
+  结果摘要只用于展示和回看。完整结果照常交给模型，并保留在 `RunResult.tool_results` 中。
+
+- **日志**：Python `logging` 输出到 stderr，默认级别为 WARNING。全局选项 `harness -v ...` 把宿主自己的日志（`agent_harness.*`）调到 DEBUG，例如插件进程的启动、退出码和耗时；第三方库（HTTP 客户端等）的日志不会打开，以免输出请求头。调试日志不记录工具参数、插件配置和环境变量。不单独写日志文件，排障主要依靠追踪。另外，`tool call -v` 是子命令自己的选项，用来显示请求、响应、stderr 和耗时（§6.3）。
 
 ---
 
@@ -716,10 +730,11 @@ agent-harness/
 └── tests/
     ├── unit/
     ├── integration/
+    ├── plugins/                # 示例插件自己的单元测试（用 plugin.invoke）
     └── fixtures/plugins/
 ```
 
-**依赖**：`typer`、`rich`、`pydantic`、`openai`、`jsonschema`（校验插件声明的 Schema）、`packaging`（PEP 440 版本范围）；开发依赖 `pytest`、`ruff`。其余都使用标准库。
+**依赖**：`typer`、`rich`、`pydantic`、`openai`、`jsonschema`（校验插件声明的 Schema）、`packaging`（PEP 440 版本范围）、`python-dotenv`（读取 `.env`）；开发依赖 `pytest`、`ruff`。其余都使用标准库。
 
 ---
 
@@ -736,6 +751,7 @@ agent-harness/
 | 重启后状态正确恢复 | 用同一个 `HARNESS_HOME` 新建 `Harness` 实例，检查启用状态、配置、授权 |
 | 安装与更新的崩溃一致性 | 在 §7.2 的各个步骤之间模拟中断，检查状态一致，且自动清理生效 |
 | 两个示例插件使用同一机制 | 两者走同一条 `install` / `enable` / `tool call` / `run` 路径 |
+| 插件清单与实现一致 | 经由宿主调用示例插件的每个参数组合（如分页），而不只是用 `plugin.invoke` 测试处理函数 |
 | 新增第三个插件无需修改宿主 | 用 `plugin new` 生成插件 → 安装 → 启用 → 调用；并检查宿主源码不含示例插件标识 |
 
 每个阶段结束时运行 `uv run pytest` 和 `uv run ruff check`。
