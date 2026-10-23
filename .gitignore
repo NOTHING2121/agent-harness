@@ -13,5 +13,8 @@ dist/
 # 本地运行产生的 Harness 数据目录（如果在项目内设置了 HARNESS_HOME）
 .harness-home/
 
+# 本地密钥（模板见 .env.example）
+.env
+
 # 系统
 .DS_Store

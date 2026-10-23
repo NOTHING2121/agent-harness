@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from dotenv import load_dotenv
 from rich.markup import escape
 
 from agent_harness import __version__
@@ -35,6 +36,7 @@ app.add_typer(plugin_app, name="plugin")
 app.add_typer(tool_app, name="tool")
 
 YesOption = Annotated[bool, typer.Option("--yes", "-y", help="对需要确认的工具调用一律允许。")]
+ENV_FILE = ".env"
 
 
 def _show_version(value: bool) -> None:
@@ -140,8 +142,10 @@ def run(
 
 
 def main() -> None:
-    """console script 入口：把可预期的 HarnessError 显示为友好的错误信息，不打印堆栈。"""
+    """console script 入口：加载当前目录的 .env（不覆盖已有环境变量），
+    并把可预期的 HarnessError 显示为友好的错误信息，不打印堆栈。"""
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    load_dotenv(Path.cwd() / ENV_FILE, override=False)
     try:
         app()
     except HarnessError as error:

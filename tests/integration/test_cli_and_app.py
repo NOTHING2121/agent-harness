@@ -1,5 +1,6 @@
 """CLI 冒烟测试与组合根的端到端连接测试（fake LM）。"""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -82,3 +83,28 @@ def test_harness_run_with_fake_llm(harness_home: Path) -> None:
     assert events[0].type == EventType.RUN_STARTED
     assert events[0].payload["model"] == "scripted"
     assert events[-1].type == EventType.RUN_FINISHED
+
+
+def test_main_loads_env_file_without_overriding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 先 setenv 再 delenv，保证测试结束后 load_dotenv 写入的变量会被清理。
+    for name in ("HARNESS_TEST_FROM_FILE", "HARNESS_TEST_EXISTING"):
+        monkeypatch.setenv(name, "placeholder")
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("HARNESS_TEST_EXISTING", "from-shell")
+    (tmp_path / ".env").write_text(
+        "HARNESS_TEST_FROM_FILE=from-file\nHARNESS_TEST_EXISTING=from-file\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    seen: dict[str, str | None] = {}
+
+    def fake_app() -> None:
+        seen["from_file"] = os.environ.get("HARNESS_TEST_FROM_FILE")
+        seen["existing"] = os.environ.get("HARNESS_TEST_EXISTING")
+
+    monkeypatch.setattr(cli_main, "app", fake_app)
+
+    cli_main.main()
+
+    assert seen == {"from_file": "from-file", "existing": "from-shell"}

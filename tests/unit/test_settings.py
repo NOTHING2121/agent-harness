@@ -18,7 +18,9 @@ def test_defaults_without_config_file(harness_home: Path) -> None:
     assert paths.home == harness_home
     assert not harness_home.exists(), "加载配置不应创建任何目录"
     assert settings.llm.provider == "openai"
-    assert settings.llm.model == "gpt-6.1-sol"
+    assert settings.llm.model == "openai/gpt-6.1-sol"
+    assert settings.llm.base_url == "https://openrouter.ai/api/v1"
+    assert settings.llm.api_key_env == "OPENROUTER_API_KEY"
     assert settings.llm.reasoning_effort is None
     assert settings.agent.max_steps == 10
     assert settings.agent.tool_result_max_chars == 20_000

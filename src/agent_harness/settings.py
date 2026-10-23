@@ -33,10 +33,12 @@ class _Section(BaseModel):
 
 
 class LLMSettings(_Section):
+    """默认通过 OpenRouter 的 OpenAI 兼容接口调用 openai/gpt-6.1-sol。"""
+
     provider: Literal["openai", "scripted"] = "openai"
-    model: str = Field(default="gpt-6.1-sol", min_length=1)
-    base_url: str = Field(default="https://api.openai.com/v1", min_length=1)
-    api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
+    model: str = Field(default="openai/gpt-6.1-sol", min_length=1)
+    base_url: str = Field(default="https://openrouter.ai/api/v1", min_length=1)
+    api_key_env: str = Field(default="OPENROUTER_API_KEY", min_length=1)
     reasoning_effort: str | None = None
     request_timeout_s: float = Field(default=120, gt=0)
 
