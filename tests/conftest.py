@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import copy
+import json
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_harness.plugins.manifest import Manifest
+from agent_harness.plugins.manifest import Manifest, default_config, load_manifest
 from agent_harness.plugins.registry import ActivePlugin
 
 HARNESS_ENV_VARS = (
@@ -77,6 +79,63 @@ def make_plugin(
             manifest=manifest,
             path=tmp_path / "plugins" / manifest.id,
             config={},
+            data_dir=tmp_path / "data" / manifest.id,
+        )
+
+    return factory
+
+
+@pytest.fixture
+def write_plugin(tmp_path: Path) -> Callable[..., Path]:
+    """在临时目录中生成插件：plugin.json 由参数构造，main.py 为给定代码。
+
+    tools 中每项可以是工具名字符串，也可以是完整的工具声明字典。
+    """
+
+    def factory(
+        plugin_id: str,
+        code: str,
+        *,
+        tools: list[str | dict[str, Any]] | None = None,
+        **manifest_overrides: Any,
+    ) -> Path:
+        plugin_dir = tmp_path / "sources" / plugin_id
+        plugin_dir.mkdir(parents=True)
+        tool_specs = [
+            item
+            if isinstance(item, dict)
+            else {"name": item, "description": f"{item} 工具", "input_schema": {"type": "object"}}
+            for item in (tools or ["run"])
+        ]
+        manifest = {
+            "api_version": 1,
+            "id": plugin_id,
+            "name": plugin_id.title(),
+            "version": "0.1.0",
+            "description": f"{plugin_id} 测试插件",
+            "entry": "main.py",
+            "tools": tool_specs,
+            **manifest_overrides,
+        }
+        (plugin_dir / "plugin.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+        )
+        (plugin_dir / "main.py").write_text(textwrap.dedent(code), encoding="utf-8")
+        return plugin_dir
+
+    return factory
+
+
+@pytest.fixture
+def load_active_plugin(tmp_path: Path) -> Callable[[Path], ActivePlugin]:
+    """把插件目录加载为 ActivePlugin（使用默认配置和临时数据目录）。"""
+
+    def factory(plugin_dir: Path) -> ActivePlugin:
+        manifest = load_manifest(plugin_dir)
+        return ActivePlugin(
+            manifest=manifest,
+            path=plugin_dir.resolve(),
+            config=default_config(manifest),
             data_dir=tmp_path / "data" / manifest.id,
         )
 

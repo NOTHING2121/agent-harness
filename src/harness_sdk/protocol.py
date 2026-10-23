@@ -30,6 +30,7 @@ class Request(TypedDict):
 
     api_version: int
     call_id: str
+    plugin_id: str
     tool: str
     arguments: dict[str, Any]
     config: dict[str, Any]

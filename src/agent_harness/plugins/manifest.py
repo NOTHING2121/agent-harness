@@ -5,15 +5,23 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
-from agent_harness.errors import not_implemented
+from agent_harness.errors import ManifestError, format_validation_error, not_implemented
 from harness_sdk.protocol import API_VERSION, MANIFEST_FILE
 
 __all__ = [
@@ -23,6 +31,7 @@ __all__ = [
     "Permissions",
     "ToolSpec",
     "check_compatibility",
+    "default_config",
     "load_manifest",
     "qualified_tool_name",
     "split_tool_name",
@@ -136,7 +145,46 @@ def split_tool_name(qualified_name: str) -> tuple[str, str]:
 
 def load_manifest(plugin_dir: Path) -> Manifest:
     """读取并静态校验插件目录中的 plugin.json，不执行插件代码；失败时抛出 ManifestError。"""
-    raise not_implemented("load_manifest", "M1")
+    manifest_path = plugin_dir / MANIFEST_FILE
+    if not manifest_path.is_file():
+        raise ManifestError(
+            f"{plugin_dir} 中找不到 {MANIFEST_FILE}",
+            hint="插件目录必须包含 plugin.json，可参考 plugins/ 下的示例插件。",
+        )
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ManifestError(f"无法读取 {manifest_path}：{exc}") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ManifestError(
+            f"{manifest_path} 不是合法的 JSON：第 {exc.lineno} 行第 {exc.colno} 列，{exc.msg}"
+        ) from exc
+    try:
+        manifest = Manifest.model_validate(data)
+    except ValidationError as exc:
+        raise ManifestError(f"{manifest_path} 校验失败：\n{format_validation_error(exc)}") from exc
+
+    root = plugin_dir.resolve()
+    entry = (root / manifest.entry).resolve()
+    if not entry.is_relative_to(root):
+        raise ManifestError(f"入口 {manifest.entry} 解析后位于插件目录之外：{entry}")
+    if not entry.is_file():
+        raise ManifestError(f"入口文件不存在：{root / manifest.entry}")
+    return manifest
+
+
+def default_config(manifest: Manifest) -> dict[str, Any]:
+    """config_schema 顶层属性中声明的默认值。"""
+    if manifest.config_schema is None:
+        return {}
+    properties = manifest.config_schema.get("properties", {})
+    return {
+        name: prop["default"]
+        for name, prop in properties.items()
+        if isinstance(prop, dict) and "default" in prop
+    }
 
 
 def check_compatibility(manifest: Manifest, harness_version: str) -> str | None:

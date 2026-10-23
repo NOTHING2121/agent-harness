@@ -1,13 +1,17 @@
+import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from agent_harness.errors import format_validation_error
+from agent_harness.errors import ManifestError, format_validation_error
 from agent_harness.plugins.manifest import (
     Manifest,
     Permissions,
+    default_config,
+    load_manifest,
     qualified_tool_name,
     split_tool_name,
 )
@@ -106,3 +110,78 @@ def test_longest_names_fit_openai_function_limit(make_manifest_data: ManifestFac
     manifest = Manifest.model_validate(make_manifest_data(id="a" * 30, tools=[tool(name="b" * 32)]))
 
     assert len(qualified_tool_name(manifest.id, manifest.tools[0].name)) == 64
+
+
+def write_plugin_dir(path: Path, manifest: dict[str, Any] | str, *, entry: bool = True) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    text = manifest if isinstance(manifest, str) else json.dumps(manifest)
+    (path / "plugin.json").write_text(text, encoding="utf-8")
+    if entry:
+        (path / "main.py").write_text("", encoding="utf-8")
+    return path
+
+
+def test_load_manifest(tmp_path: Path, make_manifest_data: ManifestFactory) -> None:
+    plugin_dir = write_plugin_dir(tmp_path / "demo", make_manifest_data())
+
+    assert load_manifest(plugin_dir).id == "demo"
+
+
+def test_load_manifest_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(ManifestError, match="找不到 plugin.json"):
+        load_manifest(tmp_path)
+
+
+def test_load_manifest_invalid_json(tmp_path: Path) -> None:
+    plugin_dir = write_plugin_dir(tmp_path / "demo", '{"id": "demo",\n  oops}')
+
+    with pytest.raises(ManifestError, match="不是合法的 JSON：第 2 行"):
+        load_manifest(plugin_dir)
+
+
+def test_load_manifest_reports_field_errors(
+    tmp_path: Path, make_manifest_data: ManifestFactory
+) -> None:
+    plugin_dir = write_plugin_dir(tmp_path / "demo", make_manifest_data(id="Bad_Id"))
+
+    with pytest.raises(ManifestError) as exc_info:
+        load_manifest(plugin_dir)
+
+    assert "校验失败" in exc_info.value.message
+    assert "id:" in exc_info.value.message
+
+
+def test_load_manifest_missing_entry(tmp_path: Path, make_manifest_data: ManifestFactory) -> None:
+    plugin_dir = write_plugin_dir(tmp_path / "demo", make_manifest_data(), entry=False)
+
+    with pytest.raises(ManifestError, match="入口文件不存在"):
+        load_manifest(plugin_dir)
+
+
+def test_load_manifest_rejects_entry_symlink_outside(
+    tmp_path: Path, make_manifest_data: ManifestFactory
+) -> None:
+    outside = tmp_path / "outside.py"
+    outside.write_text("", encoding="utf-8")
+    plugin_dir = write_plugin_dir(tmp_path / "demo", make_manifest_data(), entry=False)
+    (plugin_dir / "main.py").symlink_to(outside)
+
+    with pytest.raises(ManifestError, match="位于插件目录之外"):
+        load_manifest(plugin_dir)
+
+
+def test_default_config(make_manifest_data: ManifestFactory) -> None:
+    manifest = Manifest.model_validate(
+        make_manifest_data(
+            config_schema={
+                "type": "object",
+                "properties": {
+                    "max_notes": {"type": "integer", "default": 1000},
+                    "root": {"type": "string"},
+                },
+            }
+        )
+    )
+
+    assert default_config(manifest) == {"max_notes": 1000}
+    assert default_config(Manifest.model_validate(make_manifest_data())) == {}

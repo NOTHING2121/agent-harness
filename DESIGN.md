@@ -250,7 +250,7 @@ my-plugin/
 请求（stdin）：
 
 ```json
-{"api_version": 1, "call_id": "c_01", "tool": "add_note",
+{"api_version": 1, "call_id": "c_01", "plugin_id": "notes", "tool": "add_note",
  "arguments": {"title": "会议", "body": "周五发布"}, "config": {"max_notes": 1000}, "data_dir": "..."}
 ```
 
