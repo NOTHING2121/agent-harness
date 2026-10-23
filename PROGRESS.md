@@ -12,7 +12,37 @@
 | M2 插件管理 | 已完成 |
 | M3 异常处理与追踪 | 已完成（stdout 10 MB 上限、大结果截断、追踪落盘、runs list/show、失败时显示 stderr） |
 | M4 第二个插件与扩展性 | 已完成（workspace、跨插件 demo、plugin new/update/discover、notes delete_note） |
-| M5 交付 | README 已重写；产物在 dist/（源码 zip、wheel、sdist）。遗留：未在全新目录按 README 完整验收；DESIGN.md 未同步本轮细节 |
+| M5 交付 | 已完成：README 自包含；在全新目录按 README 验收通过；产物在 `dist/`（DESIGN.md 升至 v0.6） |
+
+---
+
+## M2–M5 插件管理、异常处理、第二个插件与交付（2026-10-23）
+
+### 本阶段实现
+
+- **M2 插件管理**：复制安装与卸载（先复制再原子切换符号链接）、`state.json` 与文件锁、有效状态计算、兼容检查、`enable`（展示权限声明并确认）/ `disable`（撤销授权）、`config`、`list`、`info`、`validate`、`permissions.env` 授权后才传入。
+- **M3 异常处理与追踪**：PluginRunner 改为后台线程读写管道，stdout 超过 10 MB 返回 `RESULT_TOO_LARGE`；结果超过 `tool_result_max_chars` 时交给模型明确标注的截断版本，完整结果保存在 `runs/<run_id>/results/`；追踪写入 `runs/<run_id>.jsonl`，新增 `runs list / show`；`run` 中工具失败时显示 stderr 末尾和回看命令；交给模型的错误带上修复建议。
+- **M4 第二个插件与扩展性**：`workspace` 插件（只读、路径限制在 `root` 内、跳过二进制和过大文件、三个工具都可分页）；跨插件离线场景 `demos/readme_to_note.json` 与示例目录 `demos/sample-project/`；`notes` 增加需要确认的 `delete_note`；`plugin update / discover / new`（模板在 `harness_sdk/templates/`）。
+- **M5 交付**：README 重写为自包含（安装、离线验收、命令、示例插件、插件开发指南、设计要点与真实安全边界）；`dist/` 中生成源码 zip、wheel 和 sdist。
+
+### 接手时发现的问题
+
+接手时工作区中有约 1400 行未提交的 M2 代码（来自之前中断的会话），其中两个测试失败：测试插件缺少 `plugin.run()`；CLI 测试没有考虑 `HarnessError` 由 `main()` 渲染、Rich 表格会在 80 列折行。已修复测试本身，实现无需改动。
+
+### 验收结果
+
+| 验收项 | 结果 |
+|---|---|
+| 在全新目录解压源码 zip，按 README 执行 `uv sync` → discover → install → config → enable → 离线跨插件运行 → `runs list` → `plugin new` → install → call | 通过 |
+| 手动：`delete_note` 非交互时拒绝、`--yes` 时执行；`../` 和指向 `root` 外的符号链接被拒绝；`update` 版本不升高时拒绝、权限声明变化后进入 `needs_approval`、旧副本被删除 | 通过 |
+| 真实 LLM 运行 | **未通过：`.env` 中的 OpenRouter Key 已失效**（服务端返回 “User not found”）。CLI 显示鉴权失败和修复建议，运行记录为 failed，行为符合预期；换有效 Key 后需重新验证 |
+| `pytest` | 225 passed |
+| `ruff check .` / `ruff format --check .` | 全部通过 |
+
+### 遗留问题
+
+1. README “设计要点”按假设回答题目的 5 个思考点（原题目不在仓库中），需要对照原题确认。
+2. 需要有效的 OpenRouter Key 才能重新验证真实 LLM 运行。
 
 ---
 

@@ -1,11 +1,21 @@
 # Local Agent Harness 设计文档
 
-> 状态：v0.5。作为后续开发的依据，变更需同步更新本文档。
+> 状态：v0.6。作为后续开发的依据，变更需同步更新本文档。
 > 日期：2026-10-23
 
 本文档定义 Harness 的模块架构、插件协议、生命周期、数据流与安全边界。原则是：**先保证插件能动态接入、Agent 能实际调用、整条链路能跑通**，工程能力够用即可，不提前做满。
 
 ### 修订记录
+
+**v0.6**（M2–M5 完成后对照实现核对）
+
+- §5.1、§5.4：PluginRunner 不再用 `communicate()`：请求在后台线程写入 stdin（插件不读 stdin 也不会阻塞宿主），stdout 和 stderr 由后台线程读取。stdout 超过 10 MB 时立即终止进程组；stderr 只保留末尾 64 KB。插件退出后若仍有子进程占用管道，等到超时为止，然后按 `PLUGIN_TIMEOUT` 处理。
+- §8.3：交给模型的错误结果除错误码和消息外，还带上 `hint`（例如工具名写错时列出可用工具），方便模型自行修正。
+- §8.4、§12：截断信息记录在 `tool.finished` 事件中（`truncated`、`full_result_path`），不单独记一条事件。完整结果只在 Agent 运行中保存；`tool call` 直接在终端显示完整结果，不保存。
+- §6.3、§15：`plugin new` 的模板以 `.tmpl` 后缀存放在 `harness_sdk/templates/`，避免被 Ruff 和 pytest 当作代码；宿主通过 `harness_sdk.protocol` 的路径定位模板，仍然只 import 协议模块。
+- §7.1：`update` 拒绝开发模式安装的插件（修改源码即生效），也拒绝与当前宿主不兼容的新版本。`needs_config` 的下一步提示会写出缺少的字段名。`discover` 默认扫描 `plugins/`。
+- §14、§16：测试专用插件不放在 `tests/fixtures/plugins/` 中，而是在测试里用 `write_plugin` fixture 现场生成，场景和断言写在一起更易读。
+- §18：交付时 `.env` 中的 OpenRouter Key 已失效（返回 “User not found”），真实 LLM 的验收以 M1 的记录为准，需要换一个有效的 Key 才能重新验证。
 
 **v0.5**（明确交付范围）
 
@@ -262,7 +272,7 @@ my-plugin/
 ```
 
 - 使用宿主自己的解释器（`sys.executable`）启动插件，**不使用系统的 `python3`**（本机系统 Python 是 3.9）。
-- 宿主用 `Popen(..., start_new_session=True)` 加 `communicate(timeout=...)` 实现；超时后用 `os.killpg` 终止整个进程组（包括插件可能派生的子进程）。
+- 宿主用 `Popen(..., start_new_session=True)` 启动插件；请求在后台线程写入 stdin，stdout（上限 10 MB）和 stderr（只保留末尾 64 KB）由后台线程读取，主线程按超时等待。超时或输出超限时用 `os.killpg` 终止整个进程组（包括插件可能派生的子进程）。
 
 ### 5.2 消息
 
@@ -301,6 +311,7 @@ my-plugin/
 | 超过超时时间 | `PLUGIN_TIMEOUT`（已终止进程组） |
 | stdout 超过 10 MB | `RESULT_TOO_LARGE` |
 | 最后一行是合法响应且 `call_id` 匹配 | 按响应中的 `ok` / `error` 处理 |
+| 插件退出后仍有子进程占用 stdout / stderr，直到超时 | `PLUGIN_TIMEOUT`（已终止进程组） |
 | 没有合法响应，退出码不为 0 | `PLUGIN_CRASHED`（附退出码和 stderr 末尾） |
 | 没有合法响应，退出码为 0 | `PROTOCOL_ERROR`（附 stdout 末尾预览） |
 
@@ -486,7 +497,7 @@ class ToolResult(BaseModel):
       "preview": "……前 20000 字符……",
       "hint": "结果过长，已截断。请用分页参数或更小的范围重新调用以获取其余内容。"}
      ```
-   - 追踪中记录一条截断事件。
+   - 追踪的 `tool.finished` 事件中记录 `truncated` 和 `full_result_path`。
 3. stdout 超过 10 MB 时返回 `RESULT_TOO_LARGE` 错误，不会静默丢弃。
 
 ### 8.5 LLM 接入
@@ -649,7 +660,7 @@ max_timeout_s = 120
   | `run.started` | prompt、模型、可用工具列表 |
   | `llm.response` | 步数（`step`）、回复内容（`content`）、工具调用（`tool_calls`）、token 用量（`usage`）、耗时（`duration_ms`） |
   | `tool.started` | `call_id`、工具名、参数 |
-  | `tool.finished` | `call_id`、工具名、成功与否、`display`、结果摘要（`result_preview`，前 500 字符）和结果总长度（`result_chars`）、错误（含错误码）、`stderr_tail`、耗时；M3 加入"是否截断" |
+  | `tool.finished` | `call_id`、工具名、成功与否、`display`、结果摘要（`result_preview`，前 500 字符）和结果总长度（`result_chars`）、错误（含错误码）、`stderr_tail`、耗时、是否截断（`truncated`）和完整结果路径（`full_result_path`） |
   | `run.finished` | 状态（completed / failed / max_steps_exceeded / cancelled）、步数、最终回答、错误和修复建议（`hint`） |
 
   结果摘要只用于展示和回看。完整结果照常交给模型，并保留在 `RunResult.tool_results` 中。
@@ -671,8 +682,8 @@ max_timeout_s = 120
 | `harness plugin enable ID [--yes]` / `disable ID` | 启用（含授权确认）/ 禁用（含撤销授权） | M2 |
 | `harness plugin config ID [--set k=v] [--unset k]` | 查看或修改配置 | M2 |
 | `harness plugin validate PATH` | 静态校验插件目录 | M2 |
-| `harness runs list` / `runs show ID` | 历史运行与追踪 | M3 |
-| `harness plugin discover DIR` | 发现可安装的插件 | M4 |
+| `harness runs list [--limit N]` / `runs show ID` | 历史运行与追踪 | M3 |
+| `harness plugin discover [DIR]` | 发现可安装的插件（默认扫描 `plugins/`） | M4 |
 | `harness plugin update ID [--from PATH]` | 更新 | M4 |
 | `harness plugin new ID [--dir DIR]` | 从模板生成插件骨架 | M4 |
 
@@ -696,7 +707,7 @@ max_timeout_s = 120
 
 **第三个插件**：由 `harness plugin new` 生成的模板插件，用于验证"新增插件不需要修改宿主代码"。
 
-**测试专用插件**（`tests/fixtures/plugins/`，不随产品发布）：`crashy`（调用中途 `os._exit`）、`sleepy`（卡死）、`noisy`（导入阶段和处理函数中都 `print`，验证 §5.3）、`bad_manifest`、`incompatible`。
+**测试专用插件**（不随产品发布）：在测试中用 `write_plugin` fixture 现场生成，覆盖崩溃（`os._exit`）、卡死、导入阶段和处理函数中 `print`（验证 §5.3）、输出超过 10 MB、不读 stdin、清单非法、版本不兼容等情况。
 
 ---
 
@@ -739,7 +750,7 @@ agent-harness/
     ├── unit/
     ├── integration/
     ├── plugins/                # 示例插件自己的单元测试（用 plugin.invoke）
-    └── fixtures/plugins/
+    └── conftest.py             # 共用 fixture（含现场生成测试插件的 write_plugin）
 ```
 
 **依赖**：`typer`、`rich`、`pydantic`、`openai`、`jsonschema`（校验插件声明的 Schema）、`packaging`（PEP 440 版本范围）、`python-dotenv`（读取 `.env`）；开发依赖 `pytest`、`ruff`。其余都使用标准库。
@@ -799,6 +810,10 @@ agent-harness/
 
 11. 交付范围（用户确认）：只交付 README 和最终产物。DESIGN.md、PROGRESS.md 和 `Agent.md` 是开发过程文档，保留在仓库中，但不是交付物；因此 `Agent.md` 不再改名为 `AGENTS.md`。
 
+12. 交付 README 中的“设计要点”一节回答题目的 5 个思考点。原题目不在仓库中，这里按设计文档的结构假设为：插件发现与注册、宿主与插件的通信、生命周期与兼容性、稳定性、安全边界。
+
 **待确认**
 
 1. ~~默认模型被账户 guardrail 屏蔽~~ **已解决（v0.4）**：原默认模型 `openai/gpt-6.1-sol` 不在账户的 guardrail 白名单中，现在改为白名单内的 `anthropic/claude-opus-4.8`。
+2. README“设计要点”是否对应题目原文的 5 个思考点（见假设 12）。
+3. `.env` 中的 OpenRouter Key 已失效，需要换一个有效的 Key 才能重新验证真实 LLM 运行。
