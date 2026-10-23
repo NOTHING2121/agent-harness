@@ -11,19 +11,25 @@
 
 ## 快速开始（离线，不需要 API Key）
 
+依次执行：安装依赖、以开发模式安装 notes 插件、查看它提供的工具、离线运行一次 Agent。
+
 ```bash
-uv sync                                          # 创建虚拟环境并安装依赖
+uv sync
 uv run harness plugin install plugins/notes --dev
-uv run harness tool list                         # 查看 notes 插件提供的工具
+uv run harness tool list
 uv run harness run "记一下周五发布的事" --script demos/notes_demo.json
 ```
+
+本文中的代码块都不含行内注释，可以直接复制到 bash 或 zsh 中执行（macOS 默认的 zsh 在交互模式下不把 `#` 当作注释）。如果不想每次都输入 `uv run`，可以先执行 `source .venv/bin/activate`，之后直接使用 `harness`。
 
 `--script` 会按顺序回放预设的模型回复，用来代替真实 LLM；工具调用仍然会启动真实的插件进程。Harness 的数据默认保存在 `~/.agent-harness`，可以用环境变量 `HARNESS_HOME` 指定其他目录，例如 `export HARNESS_HOME=$PWD/.harness-home`。
 
 ## 使用真实 LLM（OpenRouter）
 
+先复制配置模板，然后在 `.env` 中填写 `OPENROUTER_API_KEY`，再运行：
+
 ```bash
-cp .env.example .env        # 然后在 .env 中填写 OPENROUTER_API_KEY
+cp .env.example .env
 uv run harness run "帮我记一条笔记：周五发布 v0.1，然后搜索“发布”确认能找到"
 ```
 
@@ -33,10 +39,10 @@ uv run harness run "帮我记一条笔记：周五发布 v0.1，然后搜索“�
 
 ```bash
 uv run harness tool call notes__add_note --args '{"title": "买牛奶", "body": "下班路上"}'
-uv run harness tool call notes__search_notes --args '{"query": "牛奶"}' -v   # -v 显示插件 stderr
+uv run harness tool call notes__search_notes --args '{"query": "牛奶"}' -v
 ```
 
-`tool call` 绕过 LLM，但走与 Agent 完全相同的执行链路（参数校验、确认、插件进程、错误处理）。需要确认的工具会在终端询问；非交互环境中可以加 `--yes`。
+`tool call` 绕过 LLM，但走与 Agent 完全相同的执行链路（参数校验、确认、插件进程、错误处理）。子命令的 `-v` 会额外显示请求和插件的 stderr；全局的 `harness -v ...` 会输出宿主的调试日志。需要确认的工具会在终端询问；非交互环境中可以加 `--yes`。
 
 ## 写一个插件（最小示例）
 
@@ -62,10 +68,12 @@ if __name__ == "__main__":
 
 ## 测试与代码检查
 
+依次是：全部测试（不需要网络和 API Key）、代码检查、格式检查。
+
 ```bash
-uv run pytest                # 全部测试，不需要网络和 API Key
-uv run ruff check .          # 代码检查
-uv run ruff format --check . # 格式检查
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 ## 目录结构
