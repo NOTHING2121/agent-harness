@@ -1,0 +1,20 @@
+"""{{plugin_name}} 插件。每次工具调用都会启动一个新进程执行这个文件。
+
+- 工具在 plugin.json 中声明（名称、说明、input_schema），在这里用 @plugin.tool 实现，二者名称必须一致。
+- 宿主已按 input_schema 校验过参数；业务错误请抛出 ToolError，消息会交给模型和用户。
+- 需要持久保存的数据写到 ctx.data_dir；print() 的内容会进入 stderr，不会破坏协议。
+"""
+
+from harness_sdk import Context, Plugin, ToolOutput
+
+plugin = Plugin()
+
+
+@plugin.tool("greet")
+def greet(ctx: Context, name: str) -> ToolOutput:
+    greeting = ctx.config.get("greeting", "Hello")
+    return ToolOutput(content={"message": f"{greeting}, {name}!"}, display=f"{greeting}, **{name}**!")
+
+
+if __name__ == "__main__":
+    plugin.run()

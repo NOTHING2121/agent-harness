@@ -21,7 +21,7 @@ from pydantic import (
     model_validator,
 )
 
-from agent_harness.errors import ManifestError, format_validation_error, not_implemented
+from agent_harness.errors import ManifestError, format_validation_error
 from harness_sdk.protocol import API_VERSION, MANIFEST_FILE
 
 __all__ = [
@@ -31,6 +31,7 @@ __all__ = [
     "Permissions",
     "ToolSpec",
     "check_compatibility",
+    "config_problems",
     "default_config",
     "load_manifest",
     "qualified_tool_name",
@@ -189,4 +190,26 @@ def default_config(manifest: Manifest) -> dict[str, Any]:
 
 def check_compatibility(manifest: Manifest, harness_version: str) -> str | None:
     """检查 api_version 与 harness_version；兼容时返回 None，否则返回原因。"""
-    raise not_implemented("check_compatibility", "M2")
+    if manifest.api_version not in SUPPORTED_API_VERSIONS:
+        supported = "、".join(str(version) for version in sorted(SUPPORTED_API_VERSIONS))
+        return f"插件使用协议版本 api_version={manifest.api_version}，当前宿主只支持 {supported}"
+    spec = manifest.harness_version
+    if spec and not SpecifierSet(spec).contains(harness_version, prereleases=True):
+        return f"需要 harness {spec}，当前为 {harness_version}"
+    return None
+
+
+def config_problems(manifest: Manifest, config: dict[str, Any]) -> list[str]:
+    """按 config_schema 校验（已合并默认值的）配置，返回每个问题的“字段: 原因”。"""
+    if manifest.config_schema is None:
+        return [f"{key}: 插件没有声明这个配置项" for key in sorted(config)]
+    validator = Draft202012Validator(manifest.config_schema)
+    problems: list[str] = []
+    for error in sorted(validator.iter_errors(config), key=lambda e: [str(p) for p in e.path]):
+        if error.validator == "required" and isinstance(error.instance, dict):
+            missing = [name for name in error.validator_value if name not in error.instance]
+            problems.extend(f"{name}: 缺少必填配置项" for name in missing)
+        else:
+            location = ".".join(str(part) for part in error.path) or "(根)"
+            problems.append(f"{location}: {error.message}")
+    return problems

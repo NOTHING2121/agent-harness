@@ -3,7 +3,7 @@
   "id": "notes",
   "name": "Notes",
   "version": "1.0.0",
-  "description": "在本地保存、列出和搜索笔记，为 Agent 提供跨会话的记忆",
+  "description": "在本地保存、列出、搜索和删除笔记，为 Agent 提供跨会话的记忆",
   "harness_version": ">=0.1,<1.0",
   "entry": "main.py",
   "permissions": {
@@ -63,6 +63,19 @@
         "required": ["query"],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "delete_note",
+      "description": "按 ID 删除一条笔记（每次调用都需要用户确认）",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "minimum": 1, "description": "笔记 ID" }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      },
+      "requires_confirmation": true
     }
   ]
 }

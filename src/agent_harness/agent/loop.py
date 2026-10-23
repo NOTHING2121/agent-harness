@@ -136,6 +136,8 @@ class AgentLoop:
                         error=result.error.model_dump(mode="json") if result.error else None,
                         stderr_tail=result.stderr_tail,
                         duration_ms=result.duration_ms,
+                        truncated=result.truncated,
+                        full_result_path=result.full_result_path,
                     )
                     messages.append(
                         ChatMessage(role="tool", tool_call_id=call.id, content=result.for_llm())

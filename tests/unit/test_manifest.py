@@ -10,6 +10,8 @@ from agent_harness.errors import ManifestError, format_validation_error
 from agent_harness.plugins.manifest import (
     Manifest,
     Permissions,
+    check_compatibility,
+    config_problems,
     default_config,
     load_manifest,
     qualified_tool_name,
@@ -185,3 +187,49 @@ def test_default_config(make_manifest_data: ManifestFactory) -> None:
 
     assert default_config(manifest) == {"max_notes": 1000}
     assert default_config(Manifest.model_validate(make_manifest_data())) == {}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, None),
+        ({"harness_version": ">=0.1,<1.0"}, None),
+        ({"harness_version": ">=2.0"}, "需要 harness >=2.0，当前为 0.1.0"),
+        ({"api_version": 2}, "api_version=2"),
+    ],
+)
+def test_check_compatibility(
+    make_manifest_data: ManifestFactory, overrides: dict[str, Any], expected: str | None
+) -> None:
+    manifest = Manifest.model_validate(make_manifest_data(**overrides))
+
+    reason = check_compatibility(manifest, "0.1.0")
+
+    if expected is None:
+        assert reason is None
+    else:
+        assert reason is not None and expected in reason
+
+
+def test_config_problems_lists_each_field(make_manifest_data: ManifestFactory) -> None:
+    schema = {
+        "type": "object",
+        "properties": {"root": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}},
+        "required": ["root"],
+    }
+    manifest = Manifest.model_validate(make_manifest_data(config_schema=schema))
+
+    problems = config_problems(manifest, {"limit": 0})
+
+    assert "root: 缺少必填配置项" in problems
+    assert any(p.startswith("limit:") for p in problems)
+    assert config_problems(manifest, {"root": "/x"}) == []
+
+
+def test_config_problems_without_schema_rejects_any_value(
+    make_manifest_data: ManifestFactory,
+) -> None:
+    manifest = Manifest.model_validate(make_manifest_data())
+
+    assert config_problems(manifest, {}) == []
+    assert config_problems(manifest, {"x": 1}) == ["x: 插件没有声明这个配置项"]

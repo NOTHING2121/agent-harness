@@ -50,11 +50,6 @@ class LLMError(HarnessError):
     """LLM 请求失败（网络、鉴权、限流、脚本步骤用完等），本次运行会标记为 failed。"""
 
 
-def not_implemented(feature: str, milestone: str) -> NotImplementedError:
-    """骨架阶段的占位：明确标注尚未实现的功能及计划完成的阶段。"""
-    return NotImplementedError(f"{feature} 尚未实现，计划在 {milestone} 完成（见 DESIGN.md §17）")
-
-
 def format_location(loc: Sequence[int | str]) -> str:
     """把 Pydantic 的错误位置转成字段路径，例如 ("tools", 0, "name") -> "tools[0].name"。"""
     path = ""

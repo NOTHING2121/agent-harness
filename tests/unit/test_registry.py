@@ -59,7 +59,7 @@ def test_successful_result_for_llm_excludes_stderr() -> None:
     assert json.loads(result.for_llm()) == {"ok": True, "content": {"a": 1}}
 
 
-def test_failed_result_for_llm_has_code_and_message() -> None:
+def test_failed_result_for_llm_has_code_message_and_hint() -> None:
     result = ToolResult(
         call_id="c1",
         tool="demo__echo",
@@ -69,7 +69,7 @@ def test_failed_result_for_llm_has_code_and_message() -> None:
 
     assert json.loads(result.for_llm()) == {
         "ok": False,
-        "error": {"code": "TOOL_ERROR", "message": "笔记不存在"},
+        "error": {"code": "TOOL_ERROR", "message": "笔记不存在", "hint": "先列出笔记"},
     }
 
 

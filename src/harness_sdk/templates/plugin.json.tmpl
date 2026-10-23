@@ -1,0 +1,36 @@
+{
+  "api_version": 1,
+  "id": "{{plugin_id}}",
+  "name": "{{plugin_name}}",
+  "version": "0.1.0",
+  "description": "{{plugin_name}} 插件（由 harness plugin new 生成，请修改这段说明）",
+  "harness_version": ">=0.1,<1.0",
+  "entry": "main.py",
+  "permissions": {
+    "network": false,
+    "filesystem": false,
+    "subprocess": false,
+    "env": []
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "greeting": { "type": "string", "default": "Hello", "description": "问候语" }
+    },
+    "additionalProperties": false
+  },
+  "tools": [
+    {
+      "name": "greet",
+      "description": "向指定的人打招呼",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "对方的名字" }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

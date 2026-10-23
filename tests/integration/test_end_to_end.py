@@ -21,17 +21,30 @@ DEMO_SCRIPT = ROOT / "demos" / "notes_demo.json"
 runner = CliRunner()
 
 
+def install_notes_via_cli() -> None:
+    install = runner.invoke(cli_main.app, ["plugin", "install", str(NOTES_DIR), "--dev"])
+    assert install.exit_code == 0, install.output
+    enable = runner.invoke(cli_main.app, ["plugin", "enable", "notes", "--yes"])
+    assert enable.exit_code == 0, enable.output
+
+
 @pytest.fixture
 def harness(harness_home: Path) -> Harness:
     harness = Harness.open()
     harness.install_plugin(NOTES_DIR, dev=True)
+    harness.enable_plugin("notes", approve=lambda manifest: True)
     return harness
 
 
 def test_tools_are_discovered_from_manifest(harness: Harness) -> None:
     names = [tool.qualified_name for tool in harness.tools().tools]
 
-    assert names == ["notes__add_note", "notes__list_notes", "notes__search_notes"]
+    assert names == [
+        "notes__add_note",
+        "notes__list_notes",
+        "notes__search_notes",
+        "notes__delete_note",
+    ]
 
 
 def test_call_tool_through_plugin_process(harness: Harness) -> None:
@@ -129,6 +142,14 @@ def test_cli_end_to_end(harness_home: Path) -> None:
     install = runner.invoke(cli_main.app, ["plugin", "install", str(NOTES_DIR), "--dev"])
     assert install.exit_code == 0, install.output
     assert "notes__add_note" in install.output
+    assert "harness plugin enable notes" in install.output, "安装后应提示下一步"
+
+    hidden = runner.invoke(cli_main.app, ["tool", "list"])
+    assert "notes__add_note" not in hidden.output, "未启用的插件不应向 Agent 暴露工具"
+
+    enable = runner.invoke(cli_main.app, ["plugin", "enable", "notes", "--yes"])
+    assert enable.exit_code == 0, enable.output
+    assert "宿主无法限制" in enable.output, "启用时应说明真实的安全边界"
 
     listed = runner.invoke(cli_main.app, ["tool", "list"])
     assert listed.exit_code == 0, listed.output
@@ -148,7 +169,7 @@ def test_cli_end_to_end(harness_home: Path) -> None:
 
 
 def test_cli_tool_call_failure_exits_nonzero(harness_home: Path) -> None:
-    runner.invoke(cli_main.app, ["plugin", "install", str(NOTES_DIR), "--dev"])
+    install_notes_via_cli()
 
     result = runner.invoke(cli_main.app, ["tool", "call", "notes__missing"])
 
@@ -165,7 +186,7 @@ def restore_log_level() -> Iterator[None]:
 
 
 def test_cli_tool_call_verbose_shows_request_and_stderr(harness_home: Path) -> None:
-    runner.invoke(cli_main.app, ["plugin", "install", str(NOTES_DIR), "--dev"])
+    install_notes_via_cli()
 
     result = runner.invoke(
         cli_main.app,
@@ -181,7 +202,7 @@ def test_cli_tool_call_verbose_shows_request_and_stderr(harness_home: Path) -> N
 def test_global_verbose_enables_debug_logs_without_arguments(
     harness_home: Path, caplog: pytest.LogCaptureFixture, restore_log_level: None
 ) -> None:
-    runner.invoke(cli_main.app, ["plugin", "install", str(NOTES_DIR), "--dev"])
+    install_notes_via_cli()
 
     result = runner.invoke(
         cli_main.app,

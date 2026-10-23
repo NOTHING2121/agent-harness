@@ -6,18 +6,36 @@ import os
 import secrets
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 from agent_harness import __version__
 from agent_harness.agent.llm import LLMClient, OpenAICompatibleClient, ScriptedClient
 from agent_harness.agent.loop import AgentLoop, RunResult
-from agent_harness.errors import ConfigError, HarnessError
+from agent_harness.errors import ConfigError, ErrorCode, HarnessError
 from agent_harness.plugins.executor import ConfirmCallback, ToolExecutor, ToolResult
-from agent_harness.plugins.manager import PluginInfo, PluginManager
+from agent_harness.plugins.manager import (
+    ApproveCallback,
+    DiscoveredPlugin,
+    PluginInfo,
+    PluginManager,
+    PluginStatus,
+)
+from agent_harness.plugins.manifest import Manifest, split_tool_name
 from agent_harness.plugins.registry import ToolRegistry
 from agent_harness.plugins.runner import PluginRunner
+from agent_harness.plugins.scaffold import create_plugin
 from agent_harness.settings import HarnessPaths, Settings, load_settings
 from agent_harness.store import StateStore
-from agent_harness.trace import Subscriber, Trace
+from agent_harness.trace import (
+    Event,
+    RunSummary,
+    Subscriber,
+    Trace,
+    is_run_id,
+    list_trace_files,
+    read_events,
+    summarize_run,
+)
 
 LLM_PROVIDERS = ("openai", "scripted")
 
@@ -45,6 +63,47 @@ class Harness:
     def install_plugin(self, source: Path, *, dev: bool = False) -> PluginInfo:
         return self.manager.install(source, dev=dev)
 
+    def uninstall_plugin(self, plugin_id: str, *, purge: bool = False) -> Path | None:
+        """卸载插件，返回保留下来的数据目录（没有保留时为 None）。"""
+        return self.manager.uninstall(plugin_id, purge=purge)
+
+    def list_plugins(self) -> list[PluginInfo]:
+        return self.manager.list_plugins()
+
+    def plugin_info(self, plugin_id: str) -> PluginInfo:
+        return self.manager.get(plugin_id)
+
+    def enable_plugin(self, plugin_id: str, *, approve: ApproveCallback) -> PluginInfo:
+        return self.manager.enable(plugin_id, approve=approve)
+
+    def disable_plugin(self, plugin_id: str) -> PluginInfo:
+        return self.manager.disable(plugin_id)
+
+    def configure_plugin(
+        self,
+        plugin_id: str,
+        *,
+        set_values: Mapping[str, Any] | None = None,
+        unset: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        return self.manager.configure(plugin_id, set_values=set_values, unset=unset)
+
+    def validate_plugin(self, source: Path) -> tuple[Manifest, str | None]:
+        return self.manager.validate(source)
+
+    def update_plugin(
+        self, plugin_id: str, *, source: Path | None = None
+    ) -> tuple[PluginInfo, str | None]:
+        """更新复制安装的插件，返回 (新状态, 旧版本号)。"""
+        return self.manager.update(plugin_id, source=source)
+
+    def discover_plugins(self, directory: Path) -> list[DiscoveredPlugin]:
+        return self.manager.discover(directory)
+
+    def new_plugin(self, plugin_id: str, parent: Path) -> Path:
+        """从模板生成插件骨架，返回插件目录。"""
+        return create_plugin(plugin_id, parent)
+
     def tools(self) -> ToolRegistry:
         """当前可用插件提供的全部工具。"""
         return self.manager.build_registry()
@@ -54,7 +113,13 @@ class Harness:
     ) -> ToolResult:
         """绕过 LLM 直接调用一个工具，走与 Agent 完全相同的执行链路（调试用）。"""
         executor = self._executor(self.tools(), confirm)
-        return executor.execute(f"c_{secrets.token_hex(4)}", name, raw_arguments)
+        result = executor.execute(f"c_{secrets.token_hex(4)}", name, raw_arguments)
+        if result.error is not None and result.error.code is ErrorCode.UNKNOWN_TOOL:
+            hint = self._inactive_plugin_hint(name)
+            if hint:
+                error = result.error.model_copy(update={"hint": hint})
+                result = result.model_copy(update={"error": error})
+        return result
 
     def create_llm(
         self,
@@ -101,18 +166,56 @@ class Harness:
     ) -> RunResult:
         """运行一次 Agent：用当前可用插件构建注册表，执行 Agent Loop。"""
         registry = self.tools()
+        trace = Trace(subscribers=subscribers, log_dir=self.paths.runs_dir)
         loop = AgentLoop(
             llm,
             registry,
-            self._executor(registry, confirm),
+            self._executor(registry, confirm, results_dir=self.run_results_dir(trace.run_id)),
             max_steps=max_steps or self.settings.agent.max_steps,
         )
-        return loop.run(prompt, Trace(subscribers=subscribers))
+        return loop.run(prompt, trace)
 
-    def _executor(self, registry: ToolRegistry, confirm: ConfirmCallback | None) -> ToolExecutor:
+    def list_runs(self, limit: int = 20) -> list[RunSummary]:
+        """最近的运行，新的在前。"""
+        return [summarize_run(path) for path in list_trace_files(self.paths.runs_dir)[:limit]]
+
+    def run_events(self, run_id: str) -> list[Event]:
+        """读取一次运行的全部追踪事件。"""
+        path = self.paths.runs_dir / f"{run_id}.jsonl"
+        if not is_run_id(run_id) or not path.is_file():
+            raise HarnessError(
+                f"找不到运行记录 {run_id}。", hint="用 harness runs list 查看最近的运行。"
+            )
+        return read_events(path)
+
+    def run_results_dir(self, run_id: str) -> Path:
+        """被截断的大结果的完整内容保存在这里（DESIGN.md §8.4）。"""
+        return self.paths.runs_dir / run_id / "results"
+
+    def _executor(
+        self,
+        registry: ToolRegistry,
+        confirm: ConfirmCallback | None,
+        *,
+        results_dir: Path | None = None,
+    ) -> ToolExecutor:
         return ToolExecutor(
             registry,
             self.runner,
             max_result_chars=self.settings.agent.tool_result_max_chars,
             confirm=confirm,
+            results_dir=results_dir,
+        )
+
+    def _inactive_plugin_hint(self, tool_name: str) -> str | None:
+        """工具找不到、但所属插件已安装却不可用时，说明插件的状态和下一步。"""
+        try:
+            plugin_id, _ = split_tool_name(tool_name)
+        except ValueError:
+            return None
+        info = self.manager.find(plugin_id)
+        if info is None or info.status is PluginStatus.ACTIVE:
+            return None
+        return (
+            f"插件 {plugin_id} 当前状态为 {info.status.value}（{info.reason}）。下一步：{info.hint}"
         )

@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "content": "先看看项目目录里有哪些文件。",
+      "tool_calls": [{ "name": "workspace__list_files", "arguments": { "path": "." } }]
+    },
+    {
+      "content": "读取 README.md。",
+      "tool_calls": [{ "name": "workspace__read_file", "arguments": { "path": "README.md" } }]
+    },
+    {
+      "content": "把要点保存成笔记。",
+      "tool_calls": [
+        {
+          "name": "notes__add_note",
+          "arguments": {
+            "title": "Aurora README 要点",
+            "body": "每 10 分钟拉取天气数据；按城市订阅并对暴雨、高温标红；v0.3 计划周五发布，发布前补齐告警规则的单元测试。"
+          }
+        }
+      ]
+    },
+    {
+      "content": "再确认一下能检索到这条笔记。",
+      "tool_calls": [{ "name": "notes__search_notes", "arguments": { "query": "Aurora" } }]
+    },
+    {
+      "content": "已读取 sample-project 的 README.md，并把要点保存为笔记「Aurora README 要点」，可以通过关键词 Aurora 检索到。"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+"""{{plugin_name}} 插件的单元测试：用 plugin.invoke 在进程内调用处理函数，不需要启动宿主。
+
+运行：uv run pytest <插件目录>/test_main.py
+注意 invoke 不按 input_schema 校验参数；清单与实现是否一致，请再用 harness tool call 验证一次。
+"""
+
+import importlib.util
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("{{module_name}}", Path(__file__).with_name("main.py"))
+assert spec is not None and spec.loader is not None
+main = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(main)
+
+
+def test_greet(tmp_path: Path) -> None:
+    result = main.plugin.invoke("greet", {"name": "Ada"}, data_dir=tmp_path, config={"greeting": "Hi"})
+
+    assert result.content == {"message": "Hi, Ada!"}

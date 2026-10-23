@@ -9,10 +9,11 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import IO, Any
 
 from agent_harness.errors import ErrorCode, ErrorInfo
 from agent_harness.plugins.manifest import Manifest, ToolSpec
@@ -28,6 +29,11 @@ BASE_ENV_VARS = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")
 STDERR_TAIL_LINES = 20
 STDERR_TAIL_CHARS = 2000
 STDOUT_PREVIEW_CHARS = 300
+MAX_STDOUT_BYTES = 10 * 1024 * 1024
+"""stdout 的读取上限（DESIGN.md §5.4）：超过即终止进程组并返回 RESULT_TOO_LARGE。"""
+STDERR_KEEP_BYTES = 64 * 1024
+"""stderr 只保留末尾这么多字节，用于展示和追踪。"""
+PIPE_CHUNK_BYTES = 64 * 1024
 
 _PLUGIN_ERROR_CODES = {
     "tool_error": ErrorCode.TOOL_ERROR,
@@ -135,27 +141,48 @@ class PluginRunner:
                 ErrorCode.PLUGIN_CRASHED, f"无法启动插件 {plugin.id} 的进程：{exc}", started
             )
 
+        stdout_reader = _PipeReader(
+            process.stdout, limit=MAX_STDOUT_BYTES, on_overflow=lambda: _kill_process_group(process)
+        )
+        stderr_reader = _PipeReader(process.stderr, limit=STDERR_KEEP_BYTES, keep_tail=True)
+        threading.Thread(target=_write_stdin, args=(process.stdin, payload), daemon=True).start()
+        deadline = started + timeout
         try:
-            stdout, stderr = process.communicate(payload, timeout=timeout)
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            # 进程已退出，但派生的子进程可能仍占用管道：等到超时为止，仍未结束则按超时处理。
+            stdout_reader.join(max(0.0, deadline - time.monotonic()))
+            stderr_reader.join(max(0.0, deadline - time.monotonic()))
+            timed_out = stdout_reader.alive or stderr_reader.alive
         except subprocess.TimeoutExpired:
-            logger.debug("插件 %s 超时，终止进程组 %d", plugin.id, process.pid)
-            _kill_process_group(process)
-            _, stderr = _collect_after_kill(process)
-            return self._failure(
-                ErrorCode.PLUGIN_TIMEOUT,
-                f"插件 {plugin.id} 在 {timeout:g}s 内没有响应，已终止该进程。",
-                started,
-                hint="缩小请求范围，或在 plugin.json 中调大该工具的 timeout_s。",
-                stderr=stderr,
-            )
+            timed_out = True
         except BaseException:
             # 包括 Ctrl+C：先终止插件进程组再向上传递，不留下孤儿进程。
             _kill_process_group(process)
             process.wait()
             raise
 
-        # 正常结束时插件进程已被回收，不再按进程组发信号（PID 可能已被复用）。
-        # 仍占用管道的子进程会让 communicate 一直等待，最终走上面的超时分支被终止。
+        if timed_out:
+            logger.debug("插件 %s 超时，终止进程组 %d", plugin.id, process.pid)
+            _kill_process_group(process)
+            process.wait()
+            stderr_reader.join(5)
+            return self._failure(
+                ErrorCode.PLUGIN_TIMEOUT,
+                f"插件 {plugin.id} 在 {timeout:g}s 内没有响应，已终止该进程。",
+                started,
+                hint="缩小请求范围，或在 plugin.json 中调大该工具的 timeout_s。",
+                stderr=stderr_reader.data,
+            )
+        if stdout_reader.overflowed:
+            return self._failure(
+                ErrorCode.RESULT_TOO_LARGE,
+                f"插件 {plugin.id} 的输出超过 {MAX_STDOUT_BYTES // (1024 * 1024)} MB，已终止该进程。",
+                started,
+                hint="让工具返回有界的结果（分页或缩小范围），见插件开发指南中的分页约定。",
+                stderr=stderr_reader.data,
+            )
+
+        stdout, stderr = bytes(stdout_reader.data), bytes(stderr_reader.data)
         logger.debug(
             "插件 %s 已退出（退出码 %d，耗时 %d ms，stdout %d 字节，stderr %d 字节）",
             plugin.id,
@@ -230,29 +257,82 @@ class PluginRunner:
         started: float,
         *,
         hint: str | None = None,
-        stderr: bytes = b"",
+        stderr: bytes | bytearray = b"",
     ) -> RunOutcome:
         return RunOutcome(
             ok=False,
             error=ErrorInfo(code=code, message=message, hint=hint),
-            stderr_tail=tail(stderr.decode("utf-8", errors="replace")),
+            stderr_tail=tail(bytes(stderr).decode("utf-8", errors="replace")),
             duration_ms=_elapsed_ms(started),
         )
+
+
+class _PipeReader:
+    """后台线程读取一个管道，内存占用有上限。
+
+    默认保留开头：超过 limit 时标记 overflowed、丢弃已读内容并调用 on_overflow，之后继续读取丢弃，
+    避免插件阻塞在写管道上。keep_tail=True 时只保留最后 limit 字节（用于 stderr）。
+    """
+
+    def __init__(
+        self,
+        stream: IO[bytes] | None,
+        *,
+        limit: int,
+        keep_tail: bool = False,
+        on_overflow: Callable[[], None] | None = None,
+    ) -> None:
+        assert stream is not None  # Popen 使用了 PIPE
+        self.data = bytearray()
+        self.overflowed = False
+        self._thread = threading.Thread(
+            target=self._run, args=(stream, limit, keep_tail, on_overflow), daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def join(self, timeout: float) -> None:
+        self._thread.join(timeout)
+
+    def _run(
+        self,
+        stream: IO[bytes],
+        limit: int,
+        keep_tail: bool,
+        on_overflow: Callable[[], None] | None,
+    ) -> None:
+        with stream:
+            while chunk := os.read(stream.fileno(), PIPE_CHUNK_BYTES):
+                if keep_tail:
+                    self.data += chunk
+                    del self.data[:-limit]
+                elif self.overflowed:
+                    continue
+                elif len(self.data) + len(chunk) > limit:
+                    self.overflowed = True
+                    self.data.clear()
+                    if on_overflow is not None:
+                        on_overflow()
+                else:
+                    self.data += chunk
+
+
+def _write_stdin(stream: IO[bytes] | None, payload: bytes) -> None:
+    """在后台线程写请求：插件不读取 stdin 时也不会阻塞宿主，由超时兜底。"""
+    assert stream is not None
+    # 插件提前退出或关闭了 stdin 时写入会失败，结果由退出码和 stdout 判定。
+    with contextlib.suppress(OSError):
+        stream.write(payload)
+        stream.close()
 
 
 def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
     # 进程组已经不存在（插件和它的子进程都已退出）时无需处理。
     with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
-
-
-def _collect_after_kill(process: subprocess.Popen[bytes]) -> tuple[bytes, bytes]:
-    try:
-        return process.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        # 有子进程脱离了进程组仍占用管道：放弃读取剩余输出，避免宿主被卡住。
-        process.kill()
-        return b"", b""
 
 
 def _elapsed_ms(started: float) -> int:

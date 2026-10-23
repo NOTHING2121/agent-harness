@@ -111,6 +111,18 @@ def search_notes(ctx: Context, query: str, limit: int = 10, offset: int = 0) -> 
     )
 
 
+@plugin.tool("delete_note")
+def delete_note(ctx: Context, id: int) -> ToolOutput:
+    with closing(connect(ctx)) as db, write_transaction(db):
+        row = db.execute("SELECT title FROM notes WHERE id = ?", (id,)).fetchone()
+        if row is None:
+            raise ToolError(f"笔记 {id} 不存在，可以先用 list_notes 或 search_notes 查找 ID")
+        db.execute("DELETE FROM notes WHERE id = ?", (id,))
+    return ToolOutput(
+        content={"id": id, "deleted": True}, display=f"已删除笔记 #{id}「{row['title']}」"
+    )
+
+
 def page(total: int, offset: int, notes: list[dict[str, Any]]) -> dict[str, Any]:
     """分页约定（DESIGN.md §8.4）：返回 total 和 next_offset，没有更多时 next_offset 为 null。"""
     end = offset + len(notes)
