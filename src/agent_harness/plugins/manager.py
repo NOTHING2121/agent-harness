@@ -16,7 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from agent_harness.errors import HarnessError, ManifestError, not_implemented
-from agent_harness.plugins.manifest import Manifest, default_config, load_manifest
+from agent_harness.plugins.manifest import (
+    Manifest,
+    default_config,
+    load_manifest,
+    qualified_tool_name,
+)
 from agent_harness.plugins.registry import ActivePlugin, ToolRegistry
 from agent_harness.settings import HarnessPaths
 from agent_harness.store import StateStore
@@ -45,6 +50,13 @@ class PluginInfo:
     path: Path
     manifest: Manifest | None = None
     reason: str | None = None
+
+    @property
+    def tool_names(self) -> list[str]:
+        """插件提供的工具全名（<plugin_id>__<tool_name>）；清单无效时为空。"""
+        if self.manifest is None:
+            return []
+        return [qualified_tool_name(self.id, tool.name) for tool in self.manifest.tools]
 
 
 class PluginManager:
@@ -84,7 +96,10 @@ class PluginManager:
         return ToolRegistry(self.active_plugins())
 
     def install(self, source: Path, *, dev: bool = False) -> PluginInfo:
-        """安装本地目录中的插件。只读取清单、创建链接，不执行插件代码。"""
+        """安装本地目录中的插件。只读取清单、创建链接，不执行插件代码。
+
+        开发模式下重复安装同一来源视为成功（幂等）；同 ID 但来源不同时拒绝。
+        """
         if not dev:
             raise HarnessError(
                 "当前版本只支持开发模式安装。",

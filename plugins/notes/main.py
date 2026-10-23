@@ -77,16 +77,15 @@ def list_notes(ctx: Context, limit: int = 20, offset: int = 0) -> ToolOutput:
             "SELECT * FROM notes ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         ).fetchall()
     notes = [to_dict(row) for row in rows]
-    next_offset = offset + len(notes) if offset + len(notes) < total else None
     display = to_markdown(notes) if notes else "还没有笔记。"
     return ToolOutput(
-        content={"total": total, "offset": offset, "next_offset": next_offset, "notes": notes},
+        content=page(total, offset, notes),
         display=f"共 {total} 条笔记\n\n{display}",
     )
 
 
 @plugin.tool("search_notes")
-def search_notes(ctx: Context, query: str, limit: int = 10) -> ToolOutput:
+def search_notes(ctx: Context, query: str, limit: int = 10, offset: int = 0) -> ToolOutput:
     query = query.strip()
     if not query:
         raise ToolError("搜索关键词不能为空")
@@ -98,15 +97,29 @@ def search_notes(ctx: Context, query: str, limit: int = 10) -> ToolOutput:
             f"SELECT COUNT(*) FROM notes WHERE {condition}", (pattern, pattern)
         ).fetchone()
         rows = db.execute(
-            f"SELECT * FROM notes WHERE {condition} ORDER BY id DESC LIMIT ?",
-            (pattern, pattern, limit),
+            f"SELECT * FROM notes WHERE {condition} ORDER BY id DESC LIMIT ? OFFSET ?",
+            (pattern, pattern, limit, offset),
         ).fetchall()
     notes = [to_dict(row) for row in rows]
-    display = to_markdown(notes) if notes else f"没有找到包含「{query}」的笔记。"
+    if not total:
+        display = f"没有找到包含「{query}」的笔记。"
+    else:
+        display = f"找到 {total} 条包含「{query}」的笔记\n\n{to_markdown(notes)}"
     return ToolOutput(
-        content={"query": query, "total": total, "notes": notes},
-        display=f"找到 {total} 条包含「{query}」的笔记\n\n{display}" if notes else display,
+        content={"query": query, **page(total, offset, notes)},
+        display=display,
     )
+
+
+def page(total: int, offset: int, notes: list[dict[str, Any]]) -> dict[str, Any]:
+    """分页约定（DESIGN.md §8.4）：返回 total 和 next_offset，没有更多时 next_offset 为 null。"""
+    end = offset + len(notes)
+    return {
+        "total": total,
+        "offset": offset,
+        "next_offset": end if end < total else None,
+        "notes": notes,
+    }
 
 
 if __name__ == "__main__":

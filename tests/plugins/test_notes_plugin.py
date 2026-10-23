@@ -63,6 +63,20 @@ def test_search_matches_title_and_body(tmp_path: Path) -> None:
     assert {n["title"] for n in result["notes"]} == {"Release plan", "购物"}
 
 
+def test_search_is_paginated(tmp_path: Path) -> None:
+    for index in range(5):
+        call(tmp_path, "add_note", title=f"发布 {index}", body="")
+    call(tmp_path, "add_note", title="无关", body="")
+
+    first = call(tmp_path, "search_notes", query="发布", limit=2).content
+    last = call(tmp_path, "search_notes", query="发布", limit=2, offset=4).content
+
+    assert [n["title"] for n in first["notes"]] == ["发布 4", "发布 3"]
+    assert (first["total"], first["next_offset"]) == (5, 2)
+    assert [n["title"] for n in last["notes"]] == ["发布 0"]
+    assert last["next_offset"] is None
+
+
 def test_search_treats_wildcards_literally(tmp_path: Path) -> None:
     call(tmp_path, "add_note", title="完成 100%", body="")
     call(tmp_path, "add_note", title="完成 1000", body="")

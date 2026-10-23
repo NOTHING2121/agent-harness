@@ -36,6 +36,7 @@ def test_dev_install_links_source(
     link = paths.plugins_dir / "alpha"
     assert info.id == "alpha"
     assert info.status == PluginStatus.ACTIVE
+    assert info.tool_names == ["alpha__run"]
     assert link.is_symlink()
     assert link.resolve() == source.resolve()
     assert [p.name for p in paths.plugins_dir.iterdir()] == ["alpha"], "不应残留临时链接"

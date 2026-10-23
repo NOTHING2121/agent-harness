@@ -53,6 +53,16 @@ def render_tool_table(tools: list[RegisteredTool]) -> None:
     console.print(table)
 
 
+def render_tool_request(call_id: str, tool: str, raw_arguments: str) -> None:
+    """tool call -v：显示发给插件的工具名和参数（参数不是合法 JSON 时原样显示）。"""
+    try:
+        arguments: Any = json.loads(raw_arguments) if raw_arguments.strip() else {}
+    except json.JSONDecodeError:
+        arguments = raw_arguments
+    request = {"call_id": call_id, "tool": tool, "arguments": arguments}
+    console.print(Panel(JSON.from_data(request, ensure_ascii=False), title="请求"))
+
+
 def render_tool_result(result: ToolResult, *, verbose: bool = False) -> None:
     if result.ok:
         console.print(f"[green]✓[/] {escape(result.tool)} [dim]{result.duration_ms} ms[/]")
@@ -62,10 +72,9 @@ def render_tool_result(result: ToolResult, *, verbose: bool = False) -> None:
     else:
         assert result.error is not None  # ToolResult 的校验保证
         _print_failure(console, result.tool, result.error, indent=0)
-    if verbose and result.stderr_tail:
-        console.print(
-            Panel(escape(result.stderr_tail), title="插件 stderr（末尾）", border_style="dim")
-        )
+    if verbose:
+        stderr = escape(result.stderr_tail) if result.stderr_tail else "[dim]（没有输出）[/]"
+        console.print(Panel(stderr, title="插件 stderr（末尾）", border_style="dim"))
 
 
 class RunRenderer:

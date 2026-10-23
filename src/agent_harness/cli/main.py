@@ -16,12 +16,12 @@ from agent_harness.cli.render import (
     RunRenderer,
     console,
     render_error,
+    render_tool_request,
     render_tool_result,
     render_tool_table,
 )
 from agent_harness.errors import HarnessError
 from agent_harness.plugins.executor import ConfirmCallback
-from agent_harness.plugins.manifest import qualified_tool_name
 from agent_harness.plugins.registry import RegisteredTool
 
 app = typer.Typer(
@@ -37,6 +37,8 @@ app.add_typer(tool_app, name="tool")
 
 YesOption = Annotated[bool, typer.Option("--yes", "-y", help="对需要确认的工具调用一律允许。")]
 ENV_FILE = ".env"
+LOGGER_NAME = "agent_harness"
+"""-v 只打开宿主自己的调试日志，不打开第三方库（如 HTTP 客户端）的，避免输出请求头等敏感信息。"""
 
 
 def _show_version(value: bool) -> None:
@@ -51,8 +53,12 @@ def _root(
         bool,
         typer.Option("--version", callback=_show_version, is_eager=True, help="显示版本号并退出。"),
     ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="输出调试日志（DEBUG）到 stderr。")
+    ] = False,
 ) -> None:
-    pass
+    if verbose:
+        logging.getLogger(LOGGER_NAME).setLevel(logging.DEBUG)
 
 
 def _confirmer(assume_yes: bool) -> ConfirmCallback:
@@ -86,8 +92,7 @@ def plugin_install(
         f"[green]✓[/] 插件 [bold]{escape(info.id)}[/] {escape(info.manifest.version)}"
         f"（开发模式，链接到 {escape(str(info.path))}）"
     )
-    names = ", ".join(qualified_tool_name(info.id, tool.name) for tool in info.manifest.tools)
-    console.print(f"  提供 {len(info.manifest.tools)} 个工具：{escape(names)}")
+    console.print(f"  提供 {len(info.tool_names)} 个工具：{escape(', '.join(info.tool_names))}")
 
 
 @tool_app.command("list")
@@ -102,11 +107,13 @@ def tool_call(
     args: Annotated[str, typer.Option("--args", "-a", help="JSON 格式的参数。")] = "{}",
     yes: YesOption = False,
     verbose: Annotated[
-        bool, typer.Option("--verbose", "-v", help="同时显示插件的 stderr 输出。")
+        bool, typer.Option("--verbose", "-v", help="同时显示请求和插件的 stderr 输出。")
     ] = False,
 ) -> None:
     """绕过 LLM 直接调用一个工具，走与 Agent 完全相同的执行链路。"""
     result = Harness.open().call_tool(name, args, confirm=_confirmer(yes))
+    if verbose:
+        render_tool_request(result.call_id, name, args)
     render_tool_result(result, verbose=verbose)
     if not result.ok:
         raise typer.Exit(1)

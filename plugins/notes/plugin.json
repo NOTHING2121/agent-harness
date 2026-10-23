@@ -52,12 +52,13 @@
     },
     {
       "name": "search_notes",
-      "description": "在标题和正文中搜索关键词（不区分英文大小写），返回匹配的笔记",
+      "description": "在标题和正文中搜索关键词（不区分英文大小写），按创建时间倒序返回匹配的笔记，支持分页；返回 total 和 next_offset（没有更多时为 null）",
       "input_schema": {
         "type": "object",
         "properties": {
           "query": { "type": "string", "minLength": 1, "description": "关键词" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10, "description": "最多返回的条数" }
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10, "description": "每页数量" },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "跳过的条数" }
         },
         "required": ["query"],
         "additionalProperties": false

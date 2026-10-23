@@ -151,3 +151,30 @@ def test_llm_error_fails_the_run(registry: ToolRegistry) -> None:
 def test_max_steps_must_be_positive(registry: ToolRegistry) -> None:
     with pytest.raises(ValueError):
         AgentLoop(RecordingLLM([{"content": "x"}]), registry, FakeExecutor(), max_steps=0)
+
+
+def test_trace_events_carry_design_fields(registry: ToolRegistry) -> None:
+    llm = RecordingLLM([echo_step("x" * 600), {"content": "完成"}])
+    trace = Trace()
+
+    AgentLoop(llm, registry, FakeExecutor(), max_steps=5).run("hi", trace)
+
+    llm_event = next(e for e in trace.events if e.type == EventType.LLM_RESPONSE)
+    assert isinstance(llm_event.payload["duration_ms"], int)
+    finished = next(e for e in trace.events if e.type == EventType.TOOL_FINISHED)
+    full = json.dumps({"text": "x" * 600}, ensure_ascii=False)
+    assert finished.payload["result_chars"] == len(full)
+    assert finished.payload["result_preview"] == full[:500]
+    assert "stderr_tail" in finished.payload
+
+
+def test_failed_tool_has_no_result_preview(registry: ToolRegistry) -> None:
+    llm = RecordingLLM([echo_step("x"), {"content": "完成"}])
+    trace = Trace()
+
+    AgentLoop(llm, registry, FakeExecutor(failing=["demo__echo"]), max_steps=5).run("hi", trace)
+
+    finished = next(e for e in trace.events if e.type == EventType.TOOL_FINISHED)
+    assert finished.payload["result_preview"] is None
+    assert finished.payload["result_chars"] is None
+    assert finished.payload["error"]["code"] == "TOOL_ERROR"

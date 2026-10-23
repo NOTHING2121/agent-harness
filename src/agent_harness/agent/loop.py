@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+import time
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -16,6 +18,9 @@ from agent_harness.plugins.registry import ToolRegistry
 from agent_harness.trace import EventType, Trace
 
 RunStatus = Literal["completed", "failed", "max_steps_exceeded", "cancelled"]
+
+RESULT_PREVIEW_CHARS = 500
+"""追踪事件中结果摘要的长度。只用于展示；完整结果仍交给模型，并保留在 RunResult 中。"""
 
 SYSTEM_PROMPT = (
     "你是运行在本地 Agent Harness 中的助手。需要时调用工具完成任务，工具由用户安装的插件提供。"
@@ -47,6 +52,14 @@ def build_system_prompt(registry: ToolRegistry) -> str:
     lines = [SYSTEM_PROMPT, "", "当前可用的插件："]
     lines += [f"- {p.manifest.name}（{p.id}）：{p.manifest.description}" for p in plugins]
     return "\n".join(lines)
+
+
+def summarize_result(result: ToolResult) -> tuple[str | None, int | None]:
+    """返回 (结果摘要, 结果序列化后的总字符数)；失败的调用没有结果。"""
+    if not result.ok:
+        return None, None
+    text = json.dumps(result.content, ensure_ascii=False)
+    return text[:RESULT_PREVIEW_CHARS], len(text)
 
 
 class AgentLoop:
@@ -82,6 +95,7 @@ class AgentLoop:
         try:
             while step < self._max_steps:
                 step += 1
+                started = time.monotonic()
                 try:
                     response = self._llm.complete(messages, tools)
                 except LLMError as exc:
@@ -95,6 +109,7 @@ class AgentLoop:
                     content=response.content,
                     tool_calls=[call.model_dump() for call in response.tool_calls],
                     usage=response.usage.model_dump() if response.usage else None,
+                    duration_ms=int((time.monotonic() - started) * 1000),
                 )
                 if not response.tool_calls:
                     return self._finish(
@@ -109,13 +124,17 @@ class AgentLoop:
                     )
                     result = self._executor.execute(call.id, call.name, call.arguments)
                     results.append(result)
+                    preview, total_chars = summarize_result(result)
                     trace.emit(
                         EventType.TOOL_FINISHED,
                         call_id=call.id,
                         tool=call.name,
                         ok=result.ok,
                         display=result.display,
+                        result_preview=preview,
+                        result_chars=total_chars,
                         error=result.error.model_dump(mode="json") if result.error else None,
+                        stderr_tail=result.stderr_tail,
                         duration_ms=result.duration_ms,
                     )
                     messages.append(

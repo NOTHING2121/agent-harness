@@ -1,6 +1,8 @@
 """端到端：安装真实的 notes 插件，经由真实插件进程完成工具调用和 Agent 运行。"""
 
 import json
+import logging
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -48,6 +50,22 @@ def test_invalid_arguments_never_reach_plugin(harness: Harness) -> None:
 
     assert result.error is not None
     assert result.error.code == ErrorCode.INVALID_ARGUMENTS
+
+
+@pytest.mark.parametrize("tool", ["notes__list_notes", "notes__search_notes"])
+def test_pagination_contract_through_host(harness: Harness, tool: str) -> None:
+    """DESIGN.md §8.4：列表与搜索工具经宿主校验后都能按 limit / offset 翻页。"""
+    for index in range(3):
+        harness.call_tool("notes__add_note", json.dumps({"title": f"分页 {index}", "body": ""}))
+    query = {"query": "分页"} if tool.endswith("search_notes") else {}
+
+    first = harness.call_tool(tool, json.dumps({**query, "limit": 2}))
+    rest = harness.call_tool(tool, json.dumps({**query, "limit": 2, "offset": 2}))
+
+    assert first.ok and rest.ok, (first.error, rest.error)
+    assert (first.content["total"], first.content["next_offset"]) == (3, 2)
+    assert len(rest.content["notes"]) == 1
+    assert rest.content["next_offset"] is None
 
 
 def test_scripted_agent_run_calls_real_plugin(harness: Harness) -> None:
@@ -136,3 +154,41 @@ def test_cli_tool_call_failure_exits_nonzero(harness_home: Path) -> None:
 
     assert result.exit_code == 1
     assert "UNKNOWN_TOOL" in result.output
+
+
+@pytest.fixture
+def restore_log_level() -> Iterator[None]:
+    logger = logging.getLogger(cli_main.LOGGER_NAME)
+    level = logger.level
+    yield
+    logger.setLevel(level)
+
+
+def test_cli_tool_call_verbose_shows_request_and_stderr(harness_home: Path) -> None:
+    runner.invoke(cli_main.app, ["plugin", "install", str(NOTES_DIR), "--dev"])
+
+    result = runner.invoke(
+        cli_main.app,
+        ["tool", "call", "notes__search_notes", "--args", '{"query": "abc"}', "-v"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "请求" in result.output
+    assert '"query": "abc"' in result.output
+    assert "插件 stderr" in result.output
+
+
+def test_global_verbose_enables_debug_logs_without_arguments(
+    harness_home: Path, caplog: pytest.LogCaptureFixture, restore_log_level: None
+) -> None:
+    runner.invoke(cli_main.app, ["plugin", "install", str(NOTES_DIR), "--dev"])
+
+    result = runner.invoke(
+        cli_main.app,
+        ["-v", "tool", "call", "notes__search_notes", "--args", '{"query": "secret-arg"}'],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "启动插件 notes 的工具 search_notes" in caplog.text
+    assert "已退出（退出码 0" in caplog.text
+    assert "secret-arg" not in caplog.text, "调试日志不应包含工具参数"

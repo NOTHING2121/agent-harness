@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -18,6 +19,8 @@ from agent_harness.plugins.manifest import Manifest, ToolSpec
 from agent_harness.plugins.registry import ActivePlugin
 from agent_harness.settings import PluginSettings
 from harness_sdk.protocol import API_VERSION, Request
+
+logger = logging.getLogger(__name__)
 
 BASE_ENV_VARS = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")
 """插件进程总能拿到的环境变量；其余只有插件在 permissions.env 中声明的才会传入。"""
@@ -111,6 +114,10 @@ class PluginRunner:
         payload = (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")
         timeout = self.timeout_for(tool)
         started = time.monotonic()
+        # 调试日志不包含参数、配置和环境变量，避免泄露敏感信息。
+        logger.debug(
+            "启动插件 %s 的工具 %s（call_id=%s，超时 %gs）", plugin.id, tool.name, call_id, timeout
+        )
 
         try:
             plugin.data_dir.mkdir(parents=True, exist_ok=True)
@@ -131,6 +138,7 @@ class PluginRunner:
         try:
             stdout, stderr = process.communicate(payload, timeout=timeout)
         except subprocess.TimeoutExpired:
+            logger.debug("插件 %s 超时，终止进程组 %d", plugin.id, process.pid)
             _kill_process_group(process)
             _, stderr = _collect_after_kill(process)
             return self._failure(
@@ -148,6 +156,14 @@ class PluginRunner:
 
         # 正常结束时插件进程已被回收，不再按进程组发信号（PID 可能已被复用）。
         # 仍占用管道的子进程会让 communicate 一直等待，最终走上面的超时分支被终止。
+        logger.debug(
+            "插件 %s 已退出（退出码 %d，耗时 %d ms，stdout %d 字节，stderr %d 字节）",
+            plugin.id,
+            process.returncode,
+            _elapsed_ms(started),
+            len(stdout),
+            len(stderr),
+        )
         return self._interpret(plugin.id, call_id, process.returncode, stdout, stderr, started)
 
     def _interpret(
