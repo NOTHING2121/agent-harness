@@ -1,26 +1,69 @@
 # Local Agent Harness
 
-本地运行、支持插件扩展的 AI Agent Harness。用户可以安装、查看、配置、启用并运行插件；插件开发者按照一套清晰的协议为宿主增加新的工具。
+本地运行、支持插件扩展的 AI Agent Harness。用户安装插件后，Agent 通过注册表动态发现插件声明的工具并调用；插件开发者按照一套清晰的协议（`plugin.json` + `harness_sdk`）为宿主增加新能力，不需要修改宿主代码。
 
-> 当前状态：**项目骨架**。模块接口已按 [DESIGN.md](DESIGN.md) 搭好，插件加载与调用、真实 LLM 接入等功能尚未实现，进度见 [PROGRESS.md](PROGRESS.md)。
+> 当前状态：**M1 端到端最小闭环已完成**。可以用开发模式安装插件、列出和直接调用工具，并让 Agent（离线脚本或真实 LLM）调用插件。插件启用/禁用/配置等管理功能在 M2 加入，进度见 [PROGRESS.md](PROGRESS.md)。
 
 ## 环境要求
 
 - macOS 或 Linux
 - [uv](https://docs.astral.sh/uv/)：项目通过 `.python-version` 固定 Python 3.12，由 uv 自动下载和管理，不依赖系统自带的 Python
 
-## 安装与运行
+## 快速开始（离线，不需要 API Key）
 
 ```bash
-uv sync                      # 创建虚拟环境并安装依赖（含开发依赖）
-uv run harness --version     # 显示版本
-uv run harness --help        # 查看命令
+uv sync                                          # 创建虚拟环境并安装依赖
+uv run harness plugin install plugins/notes --dev
+uv run harness tool list                         # 查看 notes 插件提供的工具
+uv run harness run "记一下周五发布的事" --script demos/notes_demo.json
 ```
+
+`--script` 会按顺序回放预设的模型回复，用来代替真实 LLM；工具调用仍然会启动真实的插件进程。Harness 的数据默认保存在 `~/.agent-harness`，可以用环境变量 `HARNESS_HOME` 指定其他目录，例如 `export HARNESS_HOME=$PWD/.harness-home`。
+
+## 使用真实 LLM（OpenRouter）
+
+```bash
+cp .env.example .env        # 然后在 .env 中填写 OPENROUTER_API_KEY
+uv run harness run "帮我记一条笔记：周五发布 v0.1，然后搜索“发布”确认能找到"
+```
+
+默认模型是 `openai/gpt-6.1-sol`，可以用 `--model` 临时替换，或在 `.env` 中设置 `HARNESS_LLM_MODEL`。如果 OpenRouter 返回“被 guardrail 屏蔽”，说明账户的 guardrail 设置不允许该模型，需要在 OpenRouter 控制台放行，或换一个账户允许的模型。harness 只读取**当前目录**下的 `.env`，已经存在的同名环境变量优先。API Key 不会传给插件进程。
+
+## 直接调用工具（调试插件）
+
+```bash
+uv run harness tool call notes__add_note --args '{"title": "买牛奶", "body": "下班路上"}'
+uv run harness tool call notes__search_notes --args '{"query": "牛奶"}' -v   # -v 显示插件 stderr
+```
+
+`tool call` 绕过 LLM，但走与 Agent 完全相同的执行链路（参数校验、确认、插件进程、错误处理）。需要确认的工具会在终端询问；非交互环境中可以加 `--yes`。
+
+## 写一个插件（最小示例）
+
+插件是一个目录，包含 `plugin.json`（清单）和入口文件：
+
+```python
+# main.py
+from harness_sdk import Context, Plugin
+
+plugin = Plugin()
+
+
+@plugin.tool("greet")
+def greet(ctx: Context, name: str) -> str:
+    return f"Hello, {name}"
+
+
+if __name__ == "__main__":
+    plugin.run()
+```
+
+清单中声明 `id`、`version`、`entry` 和每个工具的 `input_schema`，完整字段见 [DESIGN.md §4](DESIGN.md)，可以参考 `plugins/notes/`。用 `harness plugin install <目录> --dev` 安装后，修改代码立即生效。插件里的 `print()` 不会破坏协议；单元测试可以用 `plugin.invoke(...)` 在进程内直接调用处理函数。
 
 ## 测试与代码检查
 
 ```bash
-uv run pytest                # 全部测试，使用离线 fake LM，不需要网络和 API Key
+uv run pytest                # 全部测试，不需要网络和 API Key
 uv run ruff check .          # 代码检查
 uv run ruff format --check . # 格式检查
 ```
@@ -28,11 +71,11 @@ uv run ruff format --check . # 格式检查
 ## 目录结构
 
 ```
-src/agent_harness/   宿主：CLI、应用服务、插件管理、Agent Loop、持久化
+src/agent_harness/   宿主：CLI、应用服务、插件管理、Agent Loop
 src/harness_sdk/     插件 SDK：只依赖标准库，插件通过它与宿主通信
-plugins/             示例插件（待添加）
-demos/               离线演示场景（待添加）
-tests/               单元测试与集成测试
+plugins/notes/       示例插件：笔记（SQLite）
+demos/               离线演示场景
+tests/               单元测试、插件测试与集成测试
 ```
 
 设计说明见 [DESIGN.md](DESIGN.md)，开发规范见 [Agent.md](Agent.md)。

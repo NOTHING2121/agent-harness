@@ -35,6 +35,7 @@ class RunResult(BaseModel):
     steps: int
     final_answer: str | None = None
     error: str | None = None
+    hint: str | None = None
     tool_results: list[ToolResult] = Field(default_factory=list)
 
 
@@ -84,7 +85,9 @@ class AgentLoop:
                 try:
                     response = self._llm.complete(messages, tools)
                 except LLMError as exc:
-                    return self._finish(trace, "failed", step, results, error=exc.message)
+                    return self._finish(
+                        trace, "failed", step, results, error=exc.message, hint=exc.hint
+                    )
                 messages.append(response.message)
                 trace.emit(
                     EventType.LLM_RESPONSE,
@@ -137,6 +140,7 @@ class AgentLoop:
         *,
         final_answer: str | None = None,
         error: str | None = None,
+        hint: str | None = None,
     ) -> RunResult:
         trace.emit(
             EventType.RUN_FINISHED,
@@ -144,6 +148,7 @@ class AgentLoop:
             steps=steps,
             final_answer=final_answer,
             error=error,
+            hint=hint,
         )
         return RunResult(
             run_id=trace.run_id,
@@ -151,5 +156,6 @@ class AgentLoop:
             steps=steps,
             final_answer=final_answer,
             error=error,
+            hint=hint,
             tool_results=results,
         )

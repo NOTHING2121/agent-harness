@@ -143,7 +143,9 @@ def test_llm_error_fails_the_run(registry: ToolRegistry) -> None:
 
     assert result.status == "failed"
     assert "步骤已全部用完" in (result.error or "")
+    assert result.hint is not None
     assert trace.events[-1].payload["status"] == "failed"
+    assert trace.events[-1].payload["hint"] == result.hint
 
 
 def test_max_steps_must_be_positive(registry: ToolRegistry) -> None:

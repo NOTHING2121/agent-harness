@@ -112,6 +112,8 @@ class RunRenderer:
             self._console.print(
                 f"[bold red]运行未完成（{escape(status)}）：[/]{escape(payload.get('error') or '')}"
             )
+            if payload.get("hint"):
+                self._console.print(f"[yellow]建议：[/]{escape(payload['hint'])}")
         self._console.print(f"[dim]共 {payload['steps']} 步[/]")
 
 

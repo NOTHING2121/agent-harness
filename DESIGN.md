@@ -28,7 +28,7 @@
 - 插件管理：发现、安装、卸载、启用、禁用、配置、更新。
 - 插件以独立子进程运行，宿主与插件通过 stdin/stdout 交换 JSON。
 - Agent Loop：从注册表动态获取工具交给 LLM，执行 LLM 发起的工具调用并回传结果。
-- LLM 接入：OpenAI 兼容接口（默认模型 `gpt-6.1-sol`），以及离线脚本回放（无需 API Key 的确定性演示）。
+- LLM 接入：OpenAI 兼容接口（默认走 OpenRouter，模型 `openai/gpt-6.1-sol`），以及离线脚本回放（无需 API Key 的确定性演示）。
 - 执行追踪、本地持久化、版本兼容检查、启用时的授权确认。
 - 两个示例插件：`notes`（自有数据的读写）和 `workspace`（只读访问用户指定目录）。
 
@@ -479,7 +479,7 @@ class LLMClient(Protocol):
 
 | 实现 | 用途 | 说明 |
 |---|---|---|
-| `OpenAICompatibleClient` | 真实推理 | 使用官方 `openai` SDK，`base_url` 可配置；默认模型 `gpt-6.1-sol`；**不发送 `temperature` 和 `top_p`**（该模型不接受）；`reasoning_effort` 可选；非流式；对 429 和 5xx 错误由 SDK 有限重试 |
+| `OpenAICompatibleClient` | 真实推理 | 使用官方 `openai` SDK，`base_url` 可配置；默认走 OpenRouter（`https://openrouter.ai/api/v1`），模型 `openai/gpt-6.1-sol`；**不发送 `temperature` 和 `top_p`**（该模型不接受）；`reasoning_effort` 可选；非流式；对 429 和 5xx 错误由 SDK 有限重试；SDK 异常转换为带修复建议的 `LLMError`（鉴权、模型不存在或被账户 guardrail 屏蔽、限流、超时、余额不足） |
 | `ScriptedClient` | 离线确定性演示和测试 | 读取场景文件，按顺序返回预设的工具调用和最终回答。**仍然走真实的 Registry → Executor → 插件进程链路**，只替换"模型决策"这一环 |
 
 场景文件示例（`demos/readme_to_note.json`）：
@@ -538,7 +538,7 @@ class LLMClient(Protocol):
 
 1. **未启用的插件不执行。** 发现、安装、查看、校验都只读取清单和复制文件；只有 active 插件会被启动。
 2. **启用时确认授权。** `enable` 会展示插件声明的能力，并附上"这些是插件的自我声明，宿主无法限制"的提示；用户确认后记录已批准的声明。`disable` 即撤销授权。更新后声明发生变化时，插件进入 `needs_approval`，需要重新确认后才会运行。
-3. **环境变量隔离。** 插件进程只拿到最小环境（`PATH`、`HOME`、`LANG`、`TMPDIR`）加上它声明且被批准的变量；宿主自己的 `OPENAI_API_KEY` 等变量不会传给插件。插件需要的密钥一律通过环境变量提供，**宿主不存储任何密钥**。
+3. **环境变量隔离。** 插件进程只拿到最小环境（`PATH`、`HOME`、`LANG`、`TMPDIR`）加上它声明且被批准的变量；宿主自己的 `OPENROUTER_API_KEY` 等变量不会传给插件。插件需要的密钥一律通过环境变量提供，**宿主不存储任何密钥**。
 4. **危险操作逐次确认。** 标记了 `requires_confirmation` 的工具每次调用前都要用户确认。
 5. **安装时的安全检查。** 入口不得逃逸出插件目录；复制时拒绝符号链接；限制总大小。
 6. **资源兜底。** 调用超时后终止进程组；限制输出大小。**不限制** CPU 和内存。
@@ -600,9 +600,9 @@ $HARNESS_HOME/
 ```toml
 [llm]
 provider = "openai"                 # openai | scripted
-model = "gpt-6.1-sol"
-base_url = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"      # 只记录环境变量的名字
+model = "openai/gpt-6.1-sol"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"  # 只记录环境变量的名字
 reasoning_effort = "medium"         # 可选，不填则不发送
 request_timeout_s = 120
 
@@ -615,7 +615,9 @@ default_timeout_s = 30
 max_timeout_s = 120
 ```
 
-优先级：命令行参数 > 环境变量（`HARNESS_HOME`、`HARNESS_LLM_PROVIDER`、`HARNESS_LLM_MODEL`、`HARNESS_LLM_BASE_URL`）> `config.toml` > 默认值。配置文件由 Pydantic 校验，不合法时启动即报错并指出字段。API Key 只从环境变量读取，不写入文件、追踪或日志。
+优先级：命令行参数 > 环境变量（`HARNESS_HOME`、`HARNESS_LLM_PROVIDER`、`HARNESS_LLM_MODEL`、`HARNESS_LLM_BASE_URL`）> `config.toml` > 默认值。配置文件由 Pydantic 校验，不合法时启动即报错并指出字段。API Key 只从环境变量读取，不写入 `config.toml`、追踪或日志。
+
+**`.env` 文件。** CLI 启动时用 `python-dotenv` 读取**当前目录**下的 `.env`（通常是项目根目录），已存在的同名环境变量优先、不会被覆盖。`.env` 被 `.gitignore` 忽略，仓库中只提交模板 `.env.example`。只读当前目录而不向上查找，是为了避免意外读到上级目录中其他项目的 `.env`。
 
 ---
 
@@ -768,7 +770,9 @@ agent-harness/
 6. 工具调用串行执行；插件不在内存中保留跨调用的状态。
 7. 不提供操作系统级沙箱，安全边界以 §10 为准。
 8. 本机系统 Python 是 3.9.6，不满足要求；项目用 `.python-version` 固定 3.12，由 uv 自动下载和管理。
+9. 真实 LLM 通过 OpenRouter 接入，API Key 放在 `.env` 的 `OPENROUTER_API_KEY` 中；换成其他 OpenAI 兼容服务只需修改 `base_url`、`api_key_env` 和 `model`。
+10. M1 中提前实现了两项很小的安全默认值，避免能力先于保护上线：`requires_confirmation` 的确认检查（没有确认回调时一律拒绝），以及插件进程的最小环境变量。M1 阶段插件声明的 `permissions.env` 会直接传入，授权确认在 M2 加入。
 
 **待确认**
 
-1. **真实 LLM 的凭据来源。** 默认方案是读取 `OPENAI_API_KEY`，通过 OpenAI 兼容接口调用 `gpt-6.1-sol`。Manus 内置的模型代理只能通过本机的 `manus-node` 调用，Python 无法直接访问；如果需要，可以再加一个可选的转接实现，但它只在装有 Manus 的电脑上可用，第三方验收时用不了。
+1. **默认模型被账户 guardrail 屏蔽。** 当前 OpenRouter 账户的 guardrail 不允许 `openai/gpt-6.1-sol`（允许的 OpenAI 模型最高到 GPT-5.6 系列），请求会返回 404。需要在 OpenRouter 的 guardrail 设置中放行该模型；在此之前可以用 `--model openai/gpt-5.6-sol` 或 `.env` 中的 `HARNESS_LLM_MODEL` 临时替换。

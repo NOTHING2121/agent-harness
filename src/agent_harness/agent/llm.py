@@ -226,10 +226,16 @@ def from_openai_completion(completion: Any) -> LLMResponse:
 
 def describe_api_error(exc: openai.APIError, settings: LLMSettings) -> tuple[str, str | None]:
     """把 SDK 异常整理成给人看的消息和修复建议；不包含 API Key。"""
-    detail = getattr(exc, "message", None) or str(exc)
+    detail = _error_detail(exc)
     if isinstance(exc, openai.AuthenticationError):
         return f"LLM 鉴权失败：{detail}", f"检查 .env 中的 {settings.api_key_env} 是否正确。"
     if isinstance(exc, openai.NotFoundError):
+        if "guardrail" in detail.lower():
+            return (
+                f"模型 {settings.model} 被服务商账户的 guardrail 策略屏蔽：{detail}",
+                "按错误信息中的链接调整 guardrail 放行该模型，"
+                "或用 --model / HARNESS_LLM_MODEL 换一个账户允许的模型。",
+            )
         return (
             f"找不到模型或接口：{detail}",
             f"检查模型 ID（当前为 {settings.model}）和 base_url（{settings.base_url}）。",
@@ -247,3 +253,11 @@ def describe_api_error(exc: openai.APIError, settings: LLMSettings) -> tuple[str
         hint = "账户余额不足，请到服务商控制台充值。" if exc.status_code == 402 else None
         return f"LLM 请求失败（HTTP {exc.status_code}）：{detail}", hint
     return f"LLM 请求失败：{detail}", None
+
+
+def _error_detail(exc: openai.APIError) -> str:
+    """优先取服务端错误体中的 message，避免把整段 JSON 打到终端。"""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict) and isinstance(body.get("message"), str):
+        return body["message"].strip()
+    return getattr(exc, "message", None) or str(exc)

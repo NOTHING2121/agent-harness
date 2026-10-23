@@ -156,3 +156,20 @@ def test_api_errors_become_llm_errors(error: Exception, message: str, hint: str)
     assert message in exc_info.value.message
     assert hint in (exc_info.value.hint or "")
     assert "sk-test" not in exc_info.value.message
+
+
+def test_guardrail_block_uses_server_message_and_specific_hint() -> None:
+    body = {
+        "message": "0 endpoints available. Model blocked by guardrail: configurable at https://x",
+        "code": 404,
+        "metadata": {"ineligibility_reasons": [{"reason": "model-ignored-by-guardrail"}]},
+    }
+    response = httpx2.Response(404, request=REQUEST)
+    error = openai.NotFoundError(f"Error code: 404 - {body}", response=response, body=body)
+
+    with pytest.raises(LLMError) as exc_info:
+        make_client(FakeSDK(error=error)).complete([ChatMessage(role="user", content="hi")], [])
+
+    assert "guardrail" in exc_info.value.message
+    assert "metadata" not in exc_info.value.message, "只展示服务端的 message，不打印整段 JSON"
+    assert "--model" in (exc_info.value.hint or "")
