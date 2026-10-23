@@ -1,11 +1,15 @@
 # Local Agent Harness 设计文档
 
-> 状态：v0.4。作为后续开发的依据，变更需同步更新本文档。
+> 状态：v0.5。作为后续开发的依据，变更需同步更新本文档。
 > 日期：2026-10-23
 
 本文档定义 Harness 的模块架构、插件协议、生命周期、数据流与安全边界。原则是：**先保证插件能动态接入、Agent 能实际调用、整条链路能跑通**，工程能力够用即可，不提前做满。
 
 ### 修订记录
+
+**v0.5**（明确交付范围）
+
+- §17、§18：用户确认交付物只有 README 和最终产物。README 必须自包含，DESIGN.md 和 PROGRESS.md 作为开发文档保留在仓库中。
 
 **v0.4**（更换默认模型）
 
@@ -772,7 +776,7 @@ agent-harness/
 | **M2 插件管理** | 复制安装与卸载（§7.2）、`state.json` 与文件锁、有效状态计算、兼容检查、`enable`（含授权确认）/ `disable`、`config`、`list`、`info`、`validate`、环境变量隔离 | 生命周期测试、重启恢复测试、崩溃一致性测试通过；Registry 只收录 active 插件 |
 | **M3 异常处理与追踪** | §5.4 的完整结果判定与错误码、错误展示（含 stderr 末尾）、测试专用插件、`requires_confirmation`、大结果处理（§8.4）、追踪落盘与 `runs list / show` | §9 中与插件相关的场景测试全部通过 |
 | **M4 第二个插件与扩展性** | `workspace` 插件、跨插件场景、`plugin new` 模板、第三个插件的扩展性测试、`update`、`discover` | 两个插件和跨插件场景测试通过；新增插件不改宿主代码 |
-| **M5 交付** | README（安装、运行、插件开发指南、验收步骤）、PROGRESS.md、在全新目录中按 README 完整验收一遍 | 按 README 从零执行，全部通过 |
+| **M5 交付** | 交付物只有 **README 和最终产物**（可运行的仓库）。README 必须自包含：安装、运行、插件管理、两个示例插件、插件开发指南、对题目 5 个思考点的回答（包括真实的安全边界）、验收步骤；不能要求读者去看 DESIGN.md 才能使用或理解。在全新目录中按 README 完整验收一遍 | 按 README 从零执行，全部通过 |
 
 **时间不够时的裁剪顺序**（越靠前越先砍）：`discover` → `plugin new` → `update` → `runs list / show`（保留运行时的实时输出）→ `workspace` 的 `search_text`。M1、M2 的核心能力、两个示例插件和基本的错误处理不裁剪。
 
@@ -792,6 +796,8 @@ agent-harness/
 8. 本机系统 Python 是 3.9.6，不满足要求；项目用 `.python-version` 固定 3.12，由 uv 自动下载和管理。
 9. 真实 LLM 通过 OpenRouter 接入，API Key 放在 `.env` 的 `OPENROUTER_API_KEY` 中；换成其他 OpenAI 兼容服务只需修改 `base_url`、`api_key_env` 和 `model`。
 10. M1 中提前实现了两项很小的安全默认值，避免能力先于保护上线：`requires_confirmation` 的确认检查（没有确认回调时一律拒绝），以及插件进程的最小环境变量。M1 阶段插件声明的 `permissions.env` 会直接传入，授权确认在 M2 加入。
+
+11. 交付范围（用户确认）：只交付 README 和最终产物。DESIGN.md、PROGRESS.md 和 `Agent.md` 是开发过程文档，保留在仓库中，但不是交付物；因此 `Agent.md` 不再改名为 `AGENTS.md`。
 
 **待确认**
 

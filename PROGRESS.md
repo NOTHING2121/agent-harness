@@ -8,6 +8,7 @@
 | **M1 端到端最小闭环** | **已完成**（默认模型已改为 `anthropic/claude-opus-4.8`，真实运行通过） |
 | M1 设计一致性核对与修正 | 已完成（DESIGN.md 升至 v0.3） |
 | 默认模型切换为 Claude Opus 4.8 | 已完成（DESIGN.md 升至 v0.4） |
+| 交付范围 | 已确认：只交付 README 和最终产物（README 必须自包含） |
 | M2 插件管理 | 下一步 |
 
 ---
@@ -113,7 +114,7 @@ M1 完成后对照 DESIGN.md 逐节核对实现。实现偏离设计的地方，
 ### 遗留问题
 
 1. ~~默认模型被账户 guardrail 屏蔽~~ **已解决**：默认模型改为账户允许的 `anthropic/claude-opus-4.8`，见上文“默认模型切换为 Claude Opus 4.8”。
-2. **文档文件名**：仓库中的规范文件是 `Agent.md`，与约定的 `AGENTS.md` 不一致，仍待确认是否重命名。
+2. ~~文档文件名~~ **不再需要处理**：交付物只有 README 和最终产物，`Agent.md` 作为开发文档保留原名。
 3. **本地开发环境**：在当前 Manus 环境中，`uv run` 无法在 uv 缓存目录加锁，所以测试和检查直接用 `.venv/bin/pytest`、`.venv/bin/ruff`，效果与 `uv run` 相同。
 
 ---
