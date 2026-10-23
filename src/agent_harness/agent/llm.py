@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from agent_harness.errors import LLMError, not_implemented
+from agent_harness.errors import HarnessError, LLMError, format_validation_error, not_implemented
 from agent_harness.settings import LLMSettings
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -97,6 +98,27 @@ class ScriptedClient:
     def __init__(self, script: Script) -> None:
         self._steps = list(script.steps)
         self._next = 0
+
+    @classmethod
+    def from_file(cls, path: Path) -> ScriptedClient:
+        """读取场景文件（JSON）；文件不存在或格式不对时抛出 HarnessError 并指出原因。"""
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise HarnessError(f"无法读取场景文件 {path}：{exc}") from exc
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise HarnessError(
+                f"场景文件 {path} 不是合法的 JSON：第 {exc.lineno} 行第 {exc.colno} 列，{exc.msg}"
+            ) from exc
+        try:
+            script = Script.model_validate(data)
+        except ValidationError as exc:
+            raise HarnessError(
+                f"场景文件 {path} 格式不正确：\n{format_validation_error(exc)}"
+            ) from exc
+        return cls(script)
 
     def complete(
         self, messages: Sequence[ChatMessage], tools: Sequence[dict[str, Any]]

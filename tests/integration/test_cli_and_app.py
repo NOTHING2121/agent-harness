@@ -67,12 +67,10 @@ def test_harness_open_reports_invalid_config(harness_home: Path) -> None:
         Harness.open()
 
 
-def test_harness_run_with_fake_llm(harness_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_harness_run_with_fake_llm(harness_home: Path) -> None:
     harness_home.mkdir(parents=True)
     (harness_home / "config.toml").write_text("[agent]\nmax_steps = 3\n", encoding="utf-8")
     harness = Harness.open()
-    # 插件加载（PluginManager.active_plugins）在 M1 实现；这里只验证组合根的连接。
-    monkeypatch.setattr(harness.manager, "active_plugins", lambda: [])
     llm = ScriptedClient(Script.model_validate({"steps": [{"content": "你好！"}]}))
     events: list[Event] = []
 

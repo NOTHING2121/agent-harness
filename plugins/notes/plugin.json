@@ -1,0 +1,67 @@
+{
+  "api_version": 1,
+  "id": "notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "description": "在本地保存、列出和搜索笔记，为 Agent 提供跨会话的记忆",
+  "harness_version": ">=0.1,<1.0",
+  "entry": "main.py",
+  "permissions": {
+    "network": false,
+    "filesystem": false,
+    "subprocess": false,
+    "env": []
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "max_notes": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1000,
+        "description": "最多保存的笔记数量"
+      }
+    },
+    "additionalProperties": false
+  },
+  "tools": [
+    {
+      "name": "add_note",
+      "description": "保存一条笔记，返回笔记 ID",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200, "description": "笔记标题" },
+          "body": { "type": "string", "description": "笔记正文" }
+        },
+        "required": ["title", "body"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_notes",
+      "description": "按创建时间倒序列出笔记，支持分页；返回 total 和 next_offset（没有更多时为 null）",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20, "description": "每页数量" },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "跳过的条数" }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_notes",
+      "description": "在标题和正文中搜索关键词（不区分英文大小写），返回匹配的笔记",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "description": "关键词" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10, "description": "最多返回的条数" }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

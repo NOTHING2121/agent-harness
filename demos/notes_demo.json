@@ -1,0 +1,25 @@
+{
+  "steps": [
+    {
+      "content": "我先把这条信息保存为笔记。",
+      "tool_calls": [
+        {
+          "name": "notes__add_note",
+          "arguments": {
+            "title": "周五发布",
+            "body": "v0.1 计划在周五发布，发布前需要完成 README 和验收步骤。"
+          }
+        }
+      ]
+    },
+    {
+      "content": "再确认一下能否按关键词检索到它。",
+      "tool_calls": [
+        { "name": "notes__search_notes", "arguments": { "query": "发布" } }
+      ]
+    },
+    {
+      "content": "已保存笔记「周五发布」，并确认可以通过关键词“发布”检索到它。"
+    }
+  ]
+}

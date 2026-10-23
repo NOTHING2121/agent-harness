@@ -111,6 +111,7 @@ class AgentLoop:
                         call_id=call.id,
                         tool=call.name,
                         ok=result.ok,
+                        display=result.display,
                         error=result.error.model_dump(mode="json") if result.error else None,
                         duration_ms=result.duration_ms,
                     )
