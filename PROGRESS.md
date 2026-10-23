@@ -9,7 +9,10 @@
 | M1 设计一致性核对与修正 | 已完成（DESIGN.md 升至 v0.3） |
 | 默认模型切换为 Claude Opus 4.8 | 已完成（DESIGN.md 升至 v0.4） |
 | 交付范围 | 已确认：只交付 README 和最终产物（README 必须自包含） |
-| M2 插件管理 | 下一步 |
+| M2 插件管理 | 已完成 |
+| M3 异常处理与追踪 | 已完成（stdout 10 MB 上限、大结果截断、追踪落盘、runs list/show、失败时显示 stderr） |
+| M4 第二个插件与扩展性 | 已完成（workspace、跨插件 demo、plugin new/update/discover、notes delete_note） |
+| M5 交付 | README 已重写；产物在 dist/（源码 zip、wheel、sdist）。遗留：未在全新目录按 README 完整验收；DESIGN.md 未同步本轮细节 |
 
 ---
 
