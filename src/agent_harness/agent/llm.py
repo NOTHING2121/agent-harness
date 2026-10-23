@@ -145,9 +145,10 @@ class ScriptedClient:
 
 
 class OpenAICompatibleClient:
-    """通过 OpenAI 兼容接口调用真实模型（默认 OpenRouter 上的 openai/gpt-6.1-sol）。
+    """通过 OpenAI 兼容接口调用真实模型（默认 OpenRouter 上的 anthropic/claude-opus-4.8）。
 
-    不发送 temperature 和 top_p（该模型不接受）；429 与 5xx 由 SDK 有限重试。
+    不发送 temperature 和 top_p，使用模型的默认值（部分模型如 openai/gpt-6.1-sol 不接受这两个参数）；
+    429 与 5xx 由 SDK 有限重试。
     """
 
     MAX_RETRIES = 2
@@ -224,6 +225,10 @@ def from_openai_completion(completion: Any) -> LLMResponse:
     )
 
 
+BATCH_SUFFIX = ":batch"
+"""OpenRouter 的批处理变体后缀，这类模型不支持 chat/completions。"""
+
+
 def describe_api_error(exc: openai.APIError, settings: LLMSettings) -> tuple[str, str | None]:
     """把 SDK 异常整理成给人看的消息和修复建议；不包含 API Key。"""
     detail = _error_detail(exc)
@@ -235,6 +240,12 @@ def describe_api_error(exc: openai.APIError, settings: LLMSettings) -> tuple[str
                 f"模型 {settings.model} 被服务商账户的 guardrail 策略屏蔽：{detail}",
                 "按错误信息中的链接调整 guardrail 放行该模型，"
                 "或用 --model / HARNESS_LLM_MODEL 换一个账户允许的模型。",
+            )
+        if settings.model.endswith(BATCH_SUFFIX):
+            return (
+                f"模型 {settings.model} 不能用于对话接口：{detail}",
+                f"{BATCH_SUFFIX} 变体只能用于异步批处理，Agent 每一步都要等模型回复，"
+                f"请去掉后缀，改用 {settings.model.removesuffix(BATCH_SUFFIX)}。",
             )
         return (
             f"找不到模型或接口：{detail}",

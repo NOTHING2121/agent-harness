@@ -33,7 +33,7 @@ cp .env.example .env
 uv run harness run "帮我记一条笔记：周五发布 v0.1，然后搜索“发布”确认能找到"
 ```
 
-默认模型是 `openai/gpt-6.1-sol`，可以用 `--model` 临时替换，或在 `.env` 中设置 `HARNESS_LLM_MODEL`。如果 OpenRouter 返回“被 guardrail 屏蔽”，说明账户的 guardrail 设置不允许该模型，需要在 OpenRouter 控制台放行，或换一个账户允许的模型。harness 只读取**当前目录**下的 `.env`，已经存在的同名环境变量优先。API Key 不会传给插件进程。
+默认模型是 `anthropic/claude-opus-4.8`，可以用 `--model` 临时替换，或在 `.env` 中设置 `HARNESS_LLM_MODEL`。模型需要支持工具调用（tool calling）。OpenRouter 的 `:batch` 变体（如 `anthropic/claude-opus-4.8:batch`）只支持异步批处理接口，不能用于 Agent。如果 OpenRouter 返回“被 guardrail 屏蔽”，说明账户的 guardrail 设置不允许该模型，需要在 OpenRouter 控制台放行，或换一个账户允许的模型。harness 只读取**当前目录**下的 `.env`，已经存在的同名环境变量优先。API Key 不会传给插件进程。
 
 ## 直接调用工具（调试插件）
 

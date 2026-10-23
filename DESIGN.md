@@ -1,11 +1,15 @@
 # Local Agent Harness 设计文档
 
-> 状态：v0.3（M1 实现后同步）。作为后续开发的依据，变更需同步更新本文档。
+> 状态：v0.4。作为后续开发的依据，变更需同步更新本文档。
 > 日期：2026-10-23
 
 本文档定义 Harness 的模块架构、插件协议、生命周期、数据流与安全边界。原则是：**先保证插件能动态接入、Agent 能实际调用、整条链路能跑通**，工程能力够用即可，不提前做满。
 
 ### 修订记录
+
+**v0.4**（更换默认模型）
+
+- §2、§8.5、§11.3、§18：按用户要求改用 Claude Opus 4.8，默认模型为 `anthropic/claude-opus-4.8`，账户 guardrail 允许，原待确认问题 1 解决。用户最初指定的是 `:batch` 变体，但它只支持 OpenRouter 的异步批处理接口，调用 chat/completions 会返回 404（`AnthropicBatchAdapter`）。Agent Loop 每一步都要同步等待模型回复，所以改用同一模型的同步版本。遇到 `:batch` 模型时，CLI 会给出专门的修复建议。
 
 **v0.3**（M1 完成后对照实现逐节核对，记录调整与澄清）
 
@@ -38,7 +42,7 @@
 - 插件管理：发现、安装、卸载、启用、禁用、配置、更新。
 - 插件以独立子进程运行，宿主与插件通过 stdin/stdout 交换 JSON。
 - Agent Loop：从注册表动态获取工具交给 LLM，执行 LLM 发起的工具调用并回传结果。
-- LLM 接入：OpenAI 兼容接口（默认走 OpenRouter，模型 `openai/gpt-6.1-sol`），以及离线脚本回放（无需 API Key 的确定性演示）。
+- LLM 接入：OpenAI 兼容接口（默认走 OpenRouter，模型 `anthropic/claude-opus-4.8`），以及离线脚本回放（无需 API Key 的确定性演示）。
 - 执行追踪、本地持久化、版本兼容检查、启用时的授权确认。
 - 两个示例插件：`notes`（自有数据的读写）和 `workspace`（只读访问用户指定目录）。
 
@@ -490,7 +494,7 @@ class LLMClient(Protocol):
 
 | 实现 | 用途 | 说明 |
 |---|---|---|
-| `OpenAICompatibleClient` | 真实推理 | 使用官方 `openai` SDK，`base_url` 可配置；默认走 OpenRouter（`https://openrouter.ai/api/v1`），模型 `openai/gpt-6.1-sol`；**不发送 `temperature` 和 `top_p`**（该模型不接受）；`reasoning_effort` 可选；非流式；对 429 和 5xx 错误由 SDK 有限重试；SDK 异常转换为带修复建议的 `LLMError`（鉴权、模型不存在或被账户 guardrail 屏蔽、限流、超时、余额不足） |
+| `OpenAICompatibleClient` | 真实推理 | 使用官方 `openai` SDK，`base_url` 可配置；默认走 OpenRouter（`https://openrouter.ai/api/v1`），模型 `anthropic/claude-opus-4.8`，模型必须支持工具调用；**不发送 `temperature` 和 `top_p`**，使用模型默认值（部分模型如 `openai/gpt-6.1-sol` 不接受这两个参数）；`reasoning_effort` 可选；非流式；对 429 和 5xx 错误由 SDK 有限重试；SDK 异常转换为带修复建议的 `LLMError`（鉴权、模型不存在或被账户 guardrail 屏蔽、`:batch` 变体不能用于对话接口、限流、超时、余额不足） |
 | `ScriptedClient` | 离线确定性演示和测试 | 读取场景文件，按顺序返回预设的工具调用和最终回答。**仍然走真实的 Registry → Executor → 插件进程链路**，只替换"模型决策"这一环 |
 
 场景文件示例（`demos/readme_to_note.json`）：
@@ -611,7 +615,7 @@ $HARNESS_HOME/
 ```toml
 [llm]
 provider = "openai"                 # openai | scripted
-model = "openai/gpt-6.1-sol"
+model = "anthropic/claude-opus-4.8"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"  # 只记录环境变量的名字
 reasoning_effort = "medium"         # 可选，不填则不发送
@@ -764,7 +768,7 @@ agent-harness/
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| **M1 端到端最小闭环** | 工程骨架（uv、Ruff、pytest）；最小清单模型；SDK 与 PluginRunner（含超时）；`install --dev`（只创建链接，此阶段所有已安装插件都视为可用）；Registry；ToolExecutor；AgentLoop；`ScriptedClient` 和 `OpenAICompatibleClient`；`notes` 插件（`add / list / search`）；`tool list`、`tool call`、`run`；运行过程的实时输出 | 离线执行 `harness run --llm scripted --script demos/notes_demo.json "..."`，完成真实的插件调用；有 API Key 时用 `gpt-6.1-sol` 真实运行成功；对应测试通过 |
+| **M1 端到端最小闭环** | 工程骨架（uv、Ruff、pytest）；最小清单模型；SDK 与 PluginRunner（含超时）；`install --dev`（只创建链接，此阶段所有已安装插件都视为可用）；Registry；ToolExecutor；AgentLoop；`ScriptedClient` 和 `OpenAICompatibleClient`；`notes` 插件（`add / list / search`）；`tool list`、`tool call`、`run`；运行过程的实时输出 | 离线执行 `harness run --llm scripted --script demos/notes_demo.json "..."`，完成真实的插件调用；有 API Key 时用默认模型真实运行成功（最初为 `gpt-6.1-sol`，v0.4 起为 `claude-opus-4.8`）；对应测试通过 |
 | **M2 插件管理** | 复制安装与卸载（§7.2）、`state.json` 与文件锁、有效状态计算、兼容检查、`enable`（含授权确认）/ `disable`、`config`、`list`、`info`、`validate`、环境变量隔离 | 生命周期测试、重启恢复测试、崩溃一致性测试通过；Registry 只收录 active 插件 |
 | **M3 异常处理与追踪** | §5.4 的完整结果判定与错误码、错误展示（含 stderr 末尾）、测试专用插件、`requires_confirmation`、大结果处理（§8.4）、追踪落盘与 `runs list / show` | §9 中与插件相关的场景测试全部通过 |
 | **M4 第二个插件与扩展性** | `workspace` 插件、跨插件场景、`plugin new` 模板、第三个插件的扩展性测试、`update`、`discover` | 两个插件和跨插件场景测试通过；新增插件不改宿主代码 |
@@ -791,4 +795,4 @@ agent-harness/
 
 **待确认**
 
-1. **默认模型被账户 guardrail 屏蔽。** 当前 OpenRouter 账户的 guardrail 不允许 `openai/gpt-6.1-sol`（允许的 OpenAI 模型最高到 GPT-5.6 系列），请求会返回 404。需要在 OpenRouter 的 guardrail 设置中放行该模型；在此之前可以用 `--model openai/gpt-5.6-sol` 或 `.env` 中的 `HARNESS_LLM_MODEL` 临时替换。
+1. ~~默认模型被账户 guardrail 屏蔽~~ **已解决（v0.4）**：原默认模型 `openai/gpt-6.1-sol` 不在账户的 guardrail 白名单中，现在改为白名单内的 `anthropic/claude-opus-4.8`。

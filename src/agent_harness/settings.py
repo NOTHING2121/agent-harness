@@ -33,10 +33,13 @@ class _Section(BaseModel):
 
 
 class LLMSettings(_Section):
-    """默认通过 OpenRouter 的 OpenAI 兼容接口调用 openai/gpt-6.1-sol。"""
+    """默认通过 OpenRouter 的 OpenAI 兼容接口调用 anthropic/claude-opus-4.8。
+
+    注意：OpenRouter 的 `:batch` 变体只能用于异步批处理接口，不能用于 Agent Loop。
+    """
 
     provider: Literal["openai", "scripted"] = "openai"
-    model: str = Field(default="openai/gpt-6.1-sol", min_length=1)
+    model: str = Field(default="anthropic/claude-opus-4.8", min_length=1)
     base_url: str = Field(default="https://openrouter.ai/api/v1", min_length=1)
     api_key_env: str = Field(default="OPENROUTER_API_KEY", min_length=1)
     reasoning_effort: str | None = None

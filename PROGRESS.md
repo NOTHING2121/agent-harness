@@ -5,9 +5,23 @@
 | 阶段 | 状态 |
 |---|---|
 | Step 0 项目骨架 | 已完成 |
-| **M1 端到端最小闭环** | **已完成**（默认模型受账户 guardrail 限制，见遗留问题 1） |
+| **M1 端到端最小闭环** | **已完成**（默认模型已改为 `anthropic/claude-opus-4.8`，真实运行通过） |
 | M1 设计一致性核对与修正 | 已完成（DESIGN.md 升至 v0.3） |
+| 默认模型切换为 Claude Opus 4.8 | 已完成（DESIGN.md 升至 v0.4） |
 | M2 插件管理 | 下一步 |
+
+---
+
+## 默认模型切换为 Claude Opus 4.8（2026-10-23）
+
+用户指定使用 `anthropic/claude-opus-4.8:batch`。先查询 OpenRouter 的模型目录和账户 guardrail：这个 ID 存在，支持工具调用，账户也允许使用。但真实调用返回 404，原文是 `cannot be used with the chat/completions endpoint (adapter AnthropicBatchAdapter)`。`:batch` 变体只能走 OpenRouter 的异步批处理接口，而 Agent Loop 每一步都要同步等待模型回复，所以默认模型改为同一模型的同步版本 `anthropic/claude-opus-4.8`（价格为批处理版的两倍：输入 $5/M，输出 $25/M）。
+
+| 验收项 | 结果 |
+|---|---|
+| `harness run --model anthropic/claude-opus-4.8:batch "你好"` | 按预期失败，并显示新的专门提示：`:batch` 变体只能用于异步批处理，请去掉后缀，改用 `anthropic/claude-opus-4.8` |
+| 不加 `--model` 真实运行“记一条笔记，然后列出所有笔记” | 通过：模型依次调用 `notes__add_note`（66 ms）和 `notes__list_notes`（68 ms），共 3 步，约 9 秒，退出码 0 |
+| `pytest` | 160 passed |
+| `ruff check .` | 通过 |
 
 ---
 
@@ -98,7 +112,7 @@ M1 完成后对照 DESIGN.md 逐节核对实现。实现偏离设计的地方，
 
 ### 遗留问题
 
-1. **默认模型被账户 guardrail 屏蔽（需要你处理）**：要让 `openai/gpt-6.1-sol` 可用，需要在 OpenRouter 的 guardrail 设置（https://openrouter.ai/workspaces/default/guardrails）中放行它。在此之前可以用 `--model openai/gpt-5.6-sol`，或在 `.env` 中设置 `HARNESS_LLM_MODEL=openai/gpt-5.6-sol`。
+1. ~~默认模型被账户 guardrail 屏蔽~~ **已解决**：默认模型改为账户允许的 `anthropic/claude-opus-4.8`，见上文“默认模型切换为 Claude Opus 4.8”。
 2. **文档文件名**：仓库中的规范文件是 `Agent.md`，与约定的 `AGENTS.md` 不一致，仍待确认是否重命名。
 3. **本地开发环境**：在当前 Manus 环境中，`uv run` 无法在 uv 缓存目录加锁，所以测试和检查直接用 `.venv/bin/pytest`、`.venv/bin/ruff`，效果与 `uv run` 相同。
 
